@@ -6,5 +6,8 @@ pub async fn run() {
         .and(warp::fs::file("./dist/index.html"))
         .or(warp::path("dist.js").and(warp::fs::file("./dist/main.js")));
 
-    warp::serve(index).run(([127, 0, 0, 1], 8000)).await
+    let routes = index;
+    let config = &crate::CONFIG.web;
+    let address = std::net::SocketAddr::new(config.address, config.port);
+    warp::serve(routes).run(address).await
 }
