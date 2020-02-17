@@ -7,6 +7,11 @@ module.exports = {
         filename: 'main.js',
         path: path.resolve(__dirname, 'dist'),
     },
+    resolve: {
+        alias: {
+            'vue$': 'vue/dist/vue.esm.js'
+        }
+    },
     plugins: [
         new HtmlWebpackPlugin({
             filename: 'index.html',

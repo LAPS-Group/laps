@@ -8,7 +8,7 @@ matrix:
       script:
         - cargo test
         - cargo fmt -- --check
-    - language: nodejs
+    - language: node_js
       node_js:
         - 13.8
       install:
