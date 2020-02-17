@@ -1,6 +1,7 @@
 #[macro_use]
+extern crate quick_error;
+#[macro_use]
 extern crate tracing;
-
 #[macro_use]
 extern crate lazy_static;
 
@@ -10,6 +11,7 @@ use std::net;
 use tracing::Level;
 
 mod module_handling;
+mod types;
 mod util;
 mod web;
 
