@@ -33,3 +33,17 @@ quick_error::quick_error! {
 }
 
 impl warp::reject::Reject for JobError {}
+
+quick_error::quick_error! {
+    ///General web error type
+    #[derive(Debug)]
+    pub enum WebError {
+        Redis(err: darkredis::Error) {
+            from()
+            display("Redis error: {}", err)
+        }
+    }
+
+}
+
+impl warp::reject::Reject for WebError {}
