@@ -1,5 +1,5 @@
-use crate::types::{self, JobError, Vector};
-use serde::{Deserialize, Serialize};
+use crate::types::{self, JobError};
+use serde::Deserialize;
 use std::convert::Infallible;
 use warp::{http::StatusCode, reply::Json, Filter, Rejection, Reply};
 
@@ -69,10 +69,7 @@ pub async fn run() {
         .and(warp::body::json())
         .and_then(submit_job);
 
-    let routes = index
-        .or(job_submission)
-        // .or(warp::any().map(|| Err::<_, Rejection>(warp::reject::not_found())))
-        .recover(handle_rejection);
+    let routes = index.or(job_submission).recover(handle_rejection);
 
     let config = &crate::CONFIG.web;
     let address = std::net::SocketAddr::new(config.address, config.port);
