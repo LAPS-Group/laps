@@ -94,9 +94,8 @@ lazy_static! {
     };
 }
 
-#[instrument]
 fn setup_tracing() {
-    let var = std::env::var("RUST_LOG").unwrap_or("laps=trace,info".into());
+    let var = std::env::var("RUST_LOG").unwrap_or_else(|_| "laps=trace,info".into());
     tracing_subscriber::FmtSubscriber::builder()
         .with_target(true)
         .with_ansi(true)
