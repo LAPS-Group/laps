@@ -1,14 +1,21 @@
+use rocket::{
+    http::Status,
+    request::Request,
+    response::{self, Responder},
+    Response,
+};
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 //General types to be used throughout the application
 
 ///General vector type to be used internally
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub struct Vector {
     pub x: f32,
     pub y: f32,
 }
 
-///Struct for storing the ouptut of a pathfinding job
+///Struct for storing the ouptut of a pathfinding job.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobResult {
     pub job_id: i32,
@@ -16,34 +23,26 @@ pub struct JobResult {
 }
 
 quick_error::quick_error! {
-    ///Error type for working with jobs
+    ///General backend error type. Should not be shown to the user
     #[derive(Debug)]
-    pub enum JobError {
+    pub enum BackendError {
         Redis(err: darkredis::Error) {
             from()
             display("Redis error: {}", err)
         }
-        InvalidModule(name: String, version: String) {
-            display("Module {} v{} is invalid", name, version)
-        }
-        InvalidInput(message: String) {
-            display("Malformed request: {}", message)
-        }
+        //A pathfinding module gave an incorrect response
+        InvalidResponse {}
     }
 }
 
-impl warp::reject::Reject for JobError {}
-
-quick_error::quick_error! {
-    ///General web error type
-    #[derive(Debug)]
-    pub enum WebError {
-        Redis(err: darkredis::Error) {
-            from()
-            display("Redis error: {}", err)
-        }
+#[rocket::async_trait]
+impl<'r> Responder<'r> for BackendError {
+    async fn respond_to(self, _: &'r Request<'_>) -> response::Result<'r> {
+        let error_message = Cursor::new("internal server error");
+        Ok(Response::build()
+            .status(Status::InternalServerError)
+            .sized_body(error_message)
+            .await
+            .finalize())
     }
-
 }
-
-impl warp::reject::Reject for WebError {}
