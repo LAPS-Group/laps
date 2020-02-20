@@ -1,9 +1,13 @@
+#![feature(proc_macro_hygiene)]
+
 #[macro_use]
 extern crate quick_error;
 #[macro_use]
 extern crate tracing;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate rocket;
 
 use config::Config;
 use darkredis::ConnectionPool;
@@ -18,7 +22,6 @@ mod web;
 #[derive(serde::Deserialize)]
 struct Configuration {
     pub redis: RedisConfig,
-    pub web: WebConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -26,12 +29,6 @@ struct RedisConfig {
     address: net::IpAddr,
     port: u16,
     password: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct WebConfig {
-    pub address: net::IpAddr,
-    pub port: u16,
 }
 
 lazy_static! {
@@ -65,33 +62,32 @@ lazy_static! {
             }
         }
     };
-    //Same thing for the Redis pool, mainly because warp does not have a good way to manage state
-    static ref REDIS_POOL: ConnectionPool = {
-        let span = span!(Level::INFO, "redis");
-        let _guard = span.enter();
-        let pool = futures::executor::block_on(async {
-            let redis_conf = &CONFIG.redis;
-            let address = net::SocketAddr::new(redis_conf.address, redis_conf.port);
-            info!("Connecting to Redis at {}", address);
+}
 
-            ConnectionPool::create(
-                address.to_string(),
-                redis_conf.password.as_ref().map(|s| s.as_str()),
-                num_cpus::get() * 2,
-            )
-            .await
-        });
-        match pool {
-            Ok(p) => {
-                info!("Successfully connected to Redis!");
-                p
-            }
-            Err(e) => {
-                error!("Failed to connect to Redis: {:?}", e);
-                std::process::exit(1);
-            }
+async fn create_redis_pool() -> ConnectionPool {
+    let span = span!(Level::INFO, "redis");
+    let _guard = span.enter();
+
+    let redis_conf = &CONFIG.redis;
+    let address = net::SocketAddr::new(redis_conf.address, redis_conf.port);
+    info!("Connecting to Redis at {}", address);
+
+    let pool = ConnectionPool::create(
+        address.to_string(),
+        redis_conf.password.as_deref(),
+        num_cpus::get() * 2,
+    )
+    .await;
+    match pool {
+        Ok(p) => {
+            info!("Successfully connected to Redis!");
+            p
         }
-    };
+        Err(e) => {
+            error!("Failed to connect to Redis: {:?}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn setup_tracing() {
@@ -109,9 +105,6 @@ fn setup_tracing() {
 async fn main() {
     setup_tracing();
 
-    // Launch module handling logic
-    tokio::spawn(module_handling::run());
-
-    info!("Running web server...");
+    info!("Starting up...");
     web::run().await
 }
