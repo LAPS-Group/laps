@@ -8,9 +8,3 @@ address = "127.0.0.1"
 port = 6379
 # OPTIONAL: password
 # passowrd = "cool-password"
-
-[web]
-# Address to listen to
-address = "127.0.0.1"
-# Port to listen to
-port = 8000
