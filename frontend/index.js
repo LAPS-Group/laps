@@ -1,29 +1,16 @@
-import axios from "axios";
-import Vue from "vue";
+import axios from 'axios';
+import Vue from 'vue';
+import SendCords from './components/SendCords.vue';
+import App from './components/App.vue';
 
-var app = new Vue({
-  el: "#root",
-  data: {
-    coordinates: {
-      start: {
-        x: 1,
-        y: 2
-      },
-      end: {
-        x: 2,
-        y: 4
-      }
-    }
-  },
-  methods: {
-    submit_points: function() {
-      let message = JSON.stringify(self.coordinates);
-      console.log(message);
-      axios.post("/job/submit", message, {
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-  }
+
+//test app that displays hello world
+new Vue({
+    el: '#app',
+    render: h => h(App),
 });
+//Calls send app, its sends coordinates
+new Vue({
+    el: '#sendCords',
+    render: s => s(SendCords),
+})
