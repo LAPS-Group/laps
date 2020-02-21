@@ -1,5 +1,7 @@
+
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const path = require('path');
+const VueLoaderPlugin = require('vue-loader/lib/plugin')
 
 module.exports = {
     entry: "./frontend/index.js",
@@ -12,7 +14,15 @@ module.exports = {
             'vue$': 'vue/dist/vue.esm.js'
         }
     },
+    module: {
+        rules: [
+          // ... other rules
+          {test: /\.vue$/,loader: 'vue-loader'},
+          { test: /\.css$/, use: ['vue-style-loader', 'css-loader']},
+        ]
+      },
     plugins: [
+        new VueLoaderPlugin(),
         new HtmlWebpackPlugin({
             filename: 'index.html',
             template: 'frontend/index.html'
