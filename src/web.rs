@@ -8,9 +8,9 @@ fn index() -> Option<NamedFile> {
     NamedFile::open("dist/index.html").ok()
 }
 
-#[get("/dist.js")]
+#[get("/main.js")]
 fn dist() -> Option<NamedFile> {
-    NamedFile::open("dist/dist.js").ok()
+    NamedFile::open("dist/main.js").ok()
 }
 
 //Launch the rocket instance
