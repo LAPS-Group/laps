@@ -11,7 +11,6 @@ extern crate rocket;
 
 use config::Config;
 use darkredis::ConnectionPool;
-use std::net;
 use tracing::Level;
 
 mod module_handling;
@@ -26,8 +25,7 @@ struct Configuration {
 
 #[derive(serde::Deserialize)]
 struct RedisConfig {
-    address: net::IpAddr,
-    port: u16,
+    address: String,
     password: Option<String>,
 }
 
@@ -69,11 +67,10 @@ async fn create_redis_pool() -> ConnectionPool {
     let _guard = span.enter();
 
     let redis_conf = &CONFIG.redis;
-    let address = net::SocketAddr::new(redis_conf.address, redis_conf.port);
-    info!("Connecting to Redis at {}", address);
+    info!("Connecting to Redis at {}", redis_conf.address);
 
     let pool = ConnectionPool::create(
-        address.to_string(),
+        redis_conf.address.clone(),
         redis_conf.password.as_deref(),
         num_cpus::get() * 2,
     )
