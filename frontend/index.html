@@ -1,20 +1,18 @@
 <!DOCTYPE html>
 <html>
-
-<head>
-    <meta charset="UTF-8">
+  <head>
+    <meta charset="UTF-8" />
     <title>LAPS</title>
-</head>
+  </head>
 
-<body>
+  <body>
     <h1>hei</h1>
     <div id="root">
-        Start X <input v-model="coordinates.start.x"><br>
-        Start Y <input v-model="coordinates.start.y"><br>
-        End X <input v-model="coordinates.end.x"> <br>
-        End Y <input v-model="coordinates.end.y"> <br>
-        <button v-on:click="submit_points">Send</button>
+      Start X <input v-model="coordinates.start.x" /><br />
+      Start Y <input v-model="coordinates.start.y" /><br />
+      End X <input v-model="coordinates.end.x" /> <br />
+      End Y <input v-model="coordinates.end.y" /> <br />
+      <button v-on:click="submit_points">Send</button>
     </div>
-</body>
-
+  </body>
 </html>
