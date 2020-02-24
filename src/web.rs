@@ -1,5 +1,6 @@
 use rocket::response::NamedFile;
 
+mod algorithms;
 mod job;
 mod map;
 
@@ -22,7 +23,15 @@ pub async fn run() {
     rocket::ignite()
         .mount(
             "/",
-            routes![dist, index, map::get_maps, map::get_map, job::submit],
+            routes![
+                dist,
+                index,
+                algorithms::list,
+                job::result,
+                job::submit,
+                map::get_map,
+                map::get_maps,
+            ],
         )
         .manage(pool)
         .serve()

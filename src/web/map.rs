@@ -50,15 +50,15 @@ mod test {
     use super::*;
     use rocket::{http::Status, local::Client};
 
+    //Test the listing of available maps and getting of map data
     #[tokio::test]
     async fn get_maps() {
+        // Test setup
         let redis = crate::create_redis_pool().await;
         let mut conn = redis.get().await;
-
         let rocket = rocket::ignite()
             .mount("/", routes![get_map, get_maps])
             .manage(redis.clone());
-
         let client = Client::new(rocket).unwrap();
 
         //Clean up previous map data

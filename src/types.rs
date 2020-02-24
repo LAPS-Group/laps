@@ -9,7 +9,7 @@ use std::io::Cursor;
 //General types to be used throughout the application
 
 ///General vector type to be used internally
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct Vector {
     pub x: f32,
     pub y: f32,
@@ -30,8 +30,16 @@ quick_error::quick_error! {
             from()
             display("Redis error: {}", err)
         }
+        JsonError(err: serde_json::Error) {
+            from()
+            display("JSON error: {}", err)
+        }
         //A pathfinding module gave an incorrect response
         InvalidResponse {}
+        //Something wrong happened that can't be handled
+        Other(msg: String) {
+            display("Other error: {}", msg)
+        }
     }
 }
 

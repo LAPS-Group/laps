@@ -8,3 +8,14 @@ address = "127.0.0.1"
 port = 6379
 # OPTIONAL: password
 # passowrd = "cool-password"
+
+
+[jobs]
+# Timeout for validity of a job token in seconds
+token_timeout = 3600
+# Timeout(in seconds) for the result of a job, will also expire the token mapping
+# when result is received.
+result_timeout = 600
+# Timeout for how long a poll for a job result should be. A higher value is
+# probably better.
+poll_timeout = 120
