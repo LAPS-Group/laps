@@ -19,6 +19,7 @@ mod types;
 mod util;
 mod web;
 
+//Struct describing the format of the configuration files
 #[derive(serde::Deserialize)]
 struct Configuration {
     pub redis: RedisConfig,
@@ -79,6 +80,7 @@ lazy_static! {
     };
 }
 
+//Create the Redis pool which is used in the application
 async fn create_redis_pool() -> ConnectionPool {
     let span = span!(Level::INFO, "redis");
     let _guard = span.enter();
@@ -105,6 +107,7 @@ async fn create_redis_pool() -> ConnectionPool {
     }
 }
 
+//Initialize tracing
 fn setup_tracing() {
     let var = std::env::var("RUST_LOG").unwrap_or_else(|_| "laps=trace,info".into());
     tracing_subscriber::FmtSubscriber::builder()
