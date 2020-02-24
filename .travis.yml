@@ -12,9 +12,4 @@ matrix:
         - 13.8
       install:
         - npm install
-        - npm install -g js-beautify
-      script:
-        - js-beautify --type js -rf dist/*.js
-        - js-beautify --type css -rf dist/*.css
-        - js-beautify --type html -rf dist/*.html
-        - git diff --exit-code
+      script: bash ./travis.sh
