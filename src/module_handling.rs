@@ -31,7 +31,7 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
     }
 }
 
-///Information that a module registers and de-registers itself with.
+//Information that a module registers and de-registers itself with.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct ModuleInfo {
     pub name: String,

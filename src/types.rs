@@ -6,16 +6,15 @@ use rocket::{
 };
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-//General types to be used throughout the application
 
-///General vector type to be used internally
+//General vector type to be used internally
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct Vector {
     pub x: f32,
     pub y: f32,
 }
 
-///Struct for storing the ouptut of a pathfinding job.
+//Struct for storing the ouptut of a pathfinding job.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobResult {
     pub job_id: i32,

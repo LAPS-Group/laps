@@ -4,11 +4,11 @@ mod algorithms;
 mod job;
 mod map;
 
+//End points for getting the frontend code
 #[get("/")]
 fn index() -> Option<NamedFile> {
     NamedFile::open("dist/index.html").ok()
 }
-
 #[get("/main.js")]
 fn dist() -> Option<NamedFile> {
     NamedFile::open("dist/main.js").ok()
