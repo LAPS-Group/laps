@@ -22,6 +22,7 @@ mod web;
 #[derive(serde::Deserialize)]
 struct Configuration {
     pub redis: RedisConfig,
+    pub jobs: JobConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -29,6 +30,14 @@ struct RedisConfig {
     address: net::IpAddr,
     port: u16,
     password: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct JobConfig {
+    //Timeouts in seconds for different purposes
+    token_timeout: u32,  // the timeout for a token mapping key
+    poll_timeout: u32,   // the amount of time a user can poll a running job
+    result_timeout: u32, // how long the results of a pathfinding job is kept
 }
 
 lazy_static! {
@@ -49,6 +58,12 @@ lazy_static! {
         info!("Loading local configuration...");
         if let Err(e) = s.merge(config::File::with_name("config/local.toml").required(false)) {
             warn!("Failed to load local configuration: {}", e);
+        }
+
+        //Load configuration for testing mode
+        if cfg!(test) {
+            //ok to unwrap as this is only used in tests
+            s.merge(config::File::with_name("config/test.toml").required(false)).unwrap();
         }
 
         match s.try_into() {
