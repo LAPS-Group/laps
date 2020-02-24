@@ -1,0 +1,8 @@
+# CONFIG FILE USED FOR TESTING
+# Modifying me only has an effect in test mode
+
+[jobs]
+#Make these way shorter to make tests run faster.
+token_timeout = 10
+poll_timeout = 1
+result_timeout = 1
