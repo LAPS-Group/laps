@@ -3,7 +3,6 @@ use rocket::{http::ContentType, Response, State};
 use rocket_contrib::{json, json::JsonValue};
 
 //Endpoint for getting map data
-#[instrument(skip(pool))]
 #[get("/maps/<id>")]
 pub async fn get_map(pool: State<'_, darkredis::ConnectionPool>, id: i32) -> Option<Response<'_>> {
     let mut conn = pool.get().await;
@@ -30,7 +29,6 @@ pub async fn get_map(pool: State<'_, darkredis::ConnectionPool>, id: i32) -> Opt
 }
 
 //Endpoint for listning available maps.
-#[instrument(skip(pool))]
 #[get("/maps/available")]
 pub async fn get_maps(pool: State<'_, darkredis::ConnectionPool>) -> JsonValue {
     let mut conn = pool.get().await;

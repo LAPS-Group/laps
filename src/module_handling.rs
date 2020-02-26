@@ -6,7 +6,6 @@ use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 //Handle any modules unregistrering themselves in a loop, forever.
-#[instrument(skip(pool))]
 async fn unregister_loop(pool: darkredis::ConnectionPool) {
     let mut conn = pool
         .spawn("unregistration-loop")
@@ -92,7 +91,6 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
 }
 
 //Listen for and handle registration of new modules
-#[instrument(skip(pool))]
 pub async fn run(pool: darkredis::ConnectionPool) {
     let mut conn = pool.spawn("module-registration").await.unwrap();
 
@@ -139,10 +137,7 @@ pub async fn get_registered_modules(
             Ok(m) => output.push(m),
             Err(e) => {
                 //Log and ignore the erroneous entry.
-                error!(
-                    module = %String::from_utf8_lossy(&module),
-                    "Failed to parse registered module: {}", e
-                );
+                error!("Failed to parse registered module: {}", e);
             }
         }
     }
