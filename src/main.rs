@@ -39,6 +39,12 @@ struct JobConfig {
     token_timeout: u32,  // the timeout for a token mapping key
     poll_timeout: u32,   // the amount of time a user can poll a running job
     result_timeout: u32, // how long the results of a pathfinding job is kept
+
+    //Number of maximum polling clients at once
+    max_polling_clients: u32,
+    //Additional connections to use in addition to max_polling clients,
+    //in order to quickly deny additional clients
+    additional_connections: u32,
 }
 
 lazy_static! {

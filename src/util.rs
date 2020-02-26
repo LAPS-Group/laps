@@ -35,7 +35,8 @@ pub fn get_job_mapping_key(token: &str) -> String {
     format!("{}.{}", prefix, token)
 }
 
-pub fn get_job_key(jobid: i32) -> String {
+//Get the key where the result of a job with job_id is or will be.
+pub fn get_job_key(job_id: i32) -> String {
     let prefix = create_redis_backend_key("job_result");
-    format!("{}.{}", prefix, jobid)
+    format!("{}.{}", prefix, job_id)
 }

@@ -17,6 +17,8 @@ fn dist() -> Option<NamedFile> {
 //Launch the rocket instance
 pub async fn run() {
     let pool = crate::create_redis_pool().await;
+    //Create the specialized pool for getting connection results
+    let result_pool = job::create_result_redis_pool().await;
     //Launch module handlers
     tokio::spawn(crate::module_handling::run(pool.clone()));
 
@@ -34,6 +36,7 @@ pub async fn run() {
             ],
         )
         .manage(pool)
+        .manage(result_pool)
         .serve()
         .await
         .unwrap();

@@ -19,3 +19,7 @@ result_timeout = 600
 # Timeout for how long a poll for a job result should be. A higher value is
 # probably better.
 poll_timeout = 120
+# The number of clients which can poll for a job result at once
+max_polling_clients = 256
+# The number of extra connections to use for the job polling connection pool, to allow sending a 504
+additional_connections = 2
