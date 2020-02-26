@@ -3,6 +3,7 @@ use crate::{
     types::{BackendError, JobResult, Vector},
     util,
 };
+use futures::TryStreamExt;
 use rand::RngCore;
 use rocket::{
     http::{ContentType, Status},
@@ -91,47 +92,130 @@ pub async fn submit(
     Ok(response)
 }
 
+//Typed connection pool for use with getting job results.
+pub struct ResultConnectionPool(darkredis::ConnectionPool);
+
+impl std::ops::Deref for ResultConnectionPool {
+    type Target = darkredis::ConnectionPool;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ResultConnectionPool {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+//Create Redis pool for use with the result polling
+pub async fn create_result_redis_pool() -> ResultConnectionPool {
+    let span = info_span!("result_redis");
+    let _guard = span.enter();
+
+    let redis_conf = &crate::CONFIG.redis;
+    let address = std::net::SocketAddr::new(redis_conf.address, redis_conf.port);
+    info!("Creating result Redis pool at {}", address);
+
+    let job_conf = &crate::CONFIG.jobs;
+    //Use a couple more connections to be able to return 504 when completely congested
+    let connection_count = job_conf.max_polling_clients + job_conf.additional_connections;
+    let pool = darkredis::ConnectionPool::create(
+        address.to_string(),
+        redis_conf.password.as_deref(),
+        connection_count as usize,
+    )
+    .await;
+    match pool {
+        Ok(p) => {
+            info!("Successfully connected to Redis!");
+            ResultConnectionPool(p)
+        }
+        Err(e) => {
+            error!("Failed to connect to Redis: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+//Wrapper struct to rate-limit the number of polling clients at once
+
 #[get("/job/result/<token>")]
 pub async fn result(
-    pool: State<'_, darkredis::ConnectionPool>,
+    pool: State<'_, ResultConnectionPool>,
     token: String,
 ) -> Result<Response<'_>, BackendError> {
-    //TODO: Rate-limiting the number of clients which can poll at once
     let mut conn = pool.get().await;
+
+    //Rate limit the number of clients
+    //Is the number of clients too big?
+    let rate_limit_key = util::create_redis_backend_key("job_poll_ratelimiter");
+    //Is the number of polling clients too big?
+    if conn.incr(&rate_limit_key).await.unwrap() > crate::CONFIG.jobs.max_polling_clients as isize {
+        //Yes, send a 504
+        conn.decr(rate_limit_key).await.unwrap();
+        return Ok(Response::build()
+            .status(Status::ServiceUnavailable)
+            .finalize());
+    }
+
     let key = util::get_job_mapping_key(&token);
-    if let Some(k) = conn.get(key).await? {
-        //Poll for a result on this job
-        //TODO: Use separate connection pool to make DoS'ing harder
-        let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
-        let job_key = util::get_job_key(job_id);
-        match conn
-            .blpop(&[&job_key], crate::CONFIG.jobs.poll_timeout)
-            .await?
-        {
-            Some(v) => {
-                conn.del(&job_key).await.unwrap();
+    match conn.get(key).await {
+        Ok(Some(k)) => {
+            //Poll for a result on this job
+            //TODO: Find a different solution which scales properly
+            //TODO: Use separate connection pool to make DoS'ing harder
+            let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
+            let job_key = util::get_job_key(job_id);
+            match conn
+                .blpop(&[&job_key], crate::CONFIG.jobs.poll_timeout)
+                .await?
+            {
+                Some(v) => {
+                    //Delete the job now that it's been received, and decrement the rate-limiting key.
+                    let commands = darkredis::CommandList::new("DEL")
+                        .arg(&job_key)
+                        .command("DECR")
+                        .arg(&rate_limit_key);
+                    conn.run_commands(commands)
+                        .await
+                        .unwrap()
+                        .try_collect::<Vec<darkredis::Value>>()
+                        .await
+                        .unwrap();
 
-                let value = v.into_iter().nth(1).unwrap();
-                //Cannot fail as it is the same value that gets deserialized in the results receiver
-                let deserialized: JobResult = serde_json::from_slice(&value).unwrap();
+                    let value = v.into_iter().nth(1).unwrap();
+                    //Cannot fail as it is the same value that gets deserialized in the results receiver
+                    let deserialized: JobResult = serde_json::from_slice(&value).unwrap();
 
-                //Hide the job_id field from the user
-                let json =
-                    Cursor::new(serde_json::json!({"points": deserialized.points}).to_string());
-                let response = Response::build()
-                    .status(Status::Ok)
-                    .header(ContentType::JSON)
-                    .sized_body(json)
-                    .await
-                    .finalize();
+                    //Hide the job_id field from the user
+                    let json =
+                        Cursor::new(serde_json::json!({"points": deserialized.points}).to_string());
+                    let response = Response::build()
+                        .status(Status::Ok)
+                        .header(ContentType::JSON)
+                        .sized_body(json)
+                        .await
+                        .finalize();
 
-                Ok(response)
+                    Ok(response)
+                }
+                //Not ready yet
+                None => {
+                    conn.decr(rate_limit_key).await.unwrap();
+                    Ok(Response::build().status(Status::NoContent).finalize())
+                }
             }
-            //Not ready yet
-            None => Ok(Response::build().status(Status::NoContent).finalize()),
         }
-    } else {
-        Ok(Response::build().status(Status::NotFound).finalize())
+        Ok(None) => {
+            conn.decr(rate_limit_key).await.unwrap();
+            Ok(Response::build().status(Status::NotFound).finalize())
+        }
+        Err(e) => {
+            conn.decr(rate_limit_key).await.unwrap();
+            Err(BackendError::Redis(e))
+        }
     }
 }
 
@@ -145,11 +229,14 @@ mod test {
     #[tokio::test]
     async fn submission() {
         //setup
-        let redis = crate::create_redis_pool().await;
-        let mut conn = redis.get().await;
+        //Need both the result_redis pool and the normal one for this test.
+        let redis_result_pool = create_result_redis_pool().await;
+        let redis_pool = crate::create_redis_pool().await;
+        let mut conn = redis_pool.get().await;
         let rocket = rocket::ignite()
             .mount("/", routes![submit, result])
-            .manage(redis.clone());
+            .manage(redis_result_pool)
+            .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
 
         //Remove all algorithms, add a fake one
@@ -161,6 +248,10 @@ mod test {
         };
         let json = serde_json::to_vec(&algorithm).unwrap();
         conn.sadd(algorithm_key, json).await.unwrap();
+        //Clear ratelimiter
+        conn.del(create_redis_backend_key("job_poll_ratelimiter"))
+            .await
+            .unwrap();
 
         //Reset the job_id counter to ensure a generated job has ID 1
         conn.del(util::create_redis_backend_key("job_id"))
@@ -238,5 +329,36 @@ mod test {
                 ]
             })
         );
+    }
+
+    #[tokio::test]
+    async fn rate_limiting() {
+        //setup
+        let redis_pool = crate::create_redis_pool().await;
+        let redis_result_pool = create_result_redis_pool().await;
+        let mut conn = redis_pool.get().await;
+        let rocket = rocket::ignite()
+            .mount("/", routes![result])
+            .manage(redis_result_pool)
+            .manage(redis_pool.clone());
+        let client = Client::new(rocket).unwrap();
+
+        //Simulate too many clients connecting at once
+        let max_clients = crate::CONFIG.jobs.max_polling_clients;
+        let rate_limit_key = create_redis_backend_key("job_poll_ratelimiter");
+        conn.set(&rate_limit_key, max_clients.to_string())
+            .await
+            .unwrap();
+
+        //Verify that it denies us. Token does not matter.
+        let response = client.get("/job/result/256").dispatch().await;
+        assert_eq!(response.status(), Status::ServiceUnavailable);
+
+        //Make room for another client
+        conn.decr(rate_limit_key).await.unwrap();
+
+        //Verify that we are now accepted but that there's no job with this token.
+        let response = client.get("/job/result/256").dispatch().await;
+        assert_eq!(response.status(), Status::NotFound);
     }
 }

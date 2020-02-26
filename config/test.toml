@@ -6,3 +6,7 @@
 token_timeout = 10
 poll_timeout = 1
 result_timeout = 1
+
+#make this smaller to make testing much easier
+max_polling_clients = 2
+additional_connections = 1
