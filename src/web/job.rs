@@ -111,18 +111,14 @@ impl std::ops::DerefMut for ResultConnectionPool {
 
 //Create Redis pool for use with the result polling
 pub async fn create_result_redis_pool() -> ResultConnectionPool {
-    let span = info_span!("result_redis");
-    let _guard = span.enter();
-
     let redis_conf = &crate::CONFIG.redis;
-    let address = std::net::SocketAddr::new(redis_conf.address, redis_conf.port);
-    info!("Creating result Redis pool at {}", address);
+    info!("Creating result Redis pool at {}", redis_conf.address);
 
     let job_conf = &crate::CONFIG.jobs;
     //Use a couple more connections to be able to return 504 when completely congested
     let connection_count = job_conf.max_polling_clients + job_conf.additional_connections;
     let pool = darkredis::ConnectionPool::create(
-        address.to_string(),
+        redis_conf.address.clone(),
         redis_conf.password.as_deref(),
         connection_count as usize,
     )
