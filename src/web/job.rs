@@ -34,14 +34,18 @@ pub struct JobSubmission {
 pub async fn submit(
     pool: State<'_, darkredis::ConnectionPool>,
     job: Json<JobSubmission>,
-) -> Result<Option<Response<'_>>, BackendError> {
+) -> Result<Response<'_>, BackendError> {
     let mut conn = pool.get().await;
 
     //Does this pathfinding module exist?
     let modules = crate::module_handling::get_registered_modules(&mut conn).await?;
     if !modules.contains(&job.algorithm) {
         //No, send a 404
-        return Ok(None);
+        return Ok(Response::build()
+            .status(Status::NotFound)
+            .sized_body(Cursor::new("No such module"))
+            .await
+            .finalize());
     }
 
     //TODO Find a random job id
@@ -77,30 +81,14 @@ pub async fn submit(
     .await
     .unwrap();
 
+    //All is good, do things
     let response = Response::build()
         .status(Status::Accepted)
         .header(ContentType::Plain)
         .sized_body(Cursor::new(token))
         .await
         .finalize();
-    Ok(Some(response))
-
-    // let result = conn
-    //     .blpop(&[util::create_redis_backend_key("path-results")], 0)
-    //     .await?
-    //     .unwrap()
-    //     .into_iter()
-    //     .nth(1)
-    //     .unwrap();
-
-    // debug!("Got response {}", String::from_utf8_lossy(&result));
-
-    // let deserialized: JobResult = serde_json::from_slice(&result).map_err(|e| {
-    //     error!("Failed to parse job result: {}", &e);
-    //     BackendError::InvalidResponse
-    // })?;
-
-    // Ok(Json(deserialized))
+    Ok(response)
 }
 
 #[get("/job/result/<token>")]
