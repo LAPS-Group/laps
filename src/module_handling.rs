@@ -2,7 +2,6 @@ use crate::util::{create_redis_backend_key, create_redis_key};
 use serde::Deserialize;
 
 //Handle any modules unregistrering themselves in a loop, forever.
-#[instrument(skip(pool))]
 async fn unregister_loop(pool: darkredis::ConnectionPool) {
     let mut conn = pool
         .spawn("unregistration-loop")
@@ -35,7 +34,6 @@ pub struct ModuleInfo {
 }
 
 //Listen for and handle registration of new modules
-#[instrument(skip(pool))]
 pub async fn run(pool: darkredis::ConnectionPool) {
     let mut conn = pool.spawn("module-registration").await.unwrap();
 
