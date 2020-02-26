@@ -19,6 +19,7 @@ pub async fn run() {
     //Launch module handlers
     tokio::spawn(crate::module_handling::run(pool.clone()));
 
+    info!("Starting Rocket...");
     rocket::ignite()
         .mount(
             "/",
