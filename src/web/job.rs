@@ -135,8 +135,7 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
     }
 }
 
-//Wrapper struct to rate-limit the number of polling clients at once
-
+//Get the result of a pathfinding job
 #[get("/job/result/<token>")]
 pub async fn result(
     pool: State<'_, ResultConnectionPool>,
@@ -160,8 +159,6 @@ pub async fn result(
     match conn.get(key).await {
         Ok(Some(k)) => {
             //Poll for a result on this job
-            //TODO: Find a different solution which scales properly
-            //TODO: Use separate connection pool to make DoS'ing harder
             let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
             let job_key = util::get_job_key(job_id);
             match conn
