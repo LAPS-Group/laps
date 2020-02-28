@@ -59,8 +59,3 @@ stages:
     if: branch = staging
   - name: deploy production
     if: branch = production
-before_install:
-  - openssl aes-256-cbc -K $encrypted_be519dac41c7_key -iv $encrypted_be519dac41c7_iv
-    -in travis_id_rsa.enc -out ./travis_id_rsa -d
-  # allow use of scp
-  - echo 'laps.website ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmM5/xxGQYN3T7kbYA76fr/1pthRzYKM2m8Z15Wk3h4TVo1q8jHf6Pl0a7A6G7p0YalyYwhrm9H4QZ5myUhW9o=' >> $HOME/.ssh/known_hosts
