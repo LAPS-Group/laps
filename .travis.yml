@@ -1,15 +1,61 @@
-matrix:
+jobs:
   include:
-    - language: rust
-      rust:
-        - nightly
-      script:
-        - cargo test -- --test-threads 1
-      services:
-        - redis-server
-    - language: node_js
-      node_js:
-        - 13.8
-      install:
-        - npm install
-      script: bash ./travis.sh
+  - stage: test
+    language: rust
+    rust: nightly
+    script:
+    - cargo test -- --test-threads 1
+    services:
+    - redis
+  - stage: test
+    language: node_js
+    node_js: 13.8
+    install:
+    - npm install
+    script: bash ./format-check.sh
+  - stage: deploy staging
+    language: rust
+    os: linux
+    dist: bionic
+    rust: nightly
+    before_install:
+      - nvm install 13.8
+      - openssl aes-256-cbc -K $encrypted_be519dac41c7_key -iv $encrypted_be519dac41c7_iv
+        -in travis_id_rsa.enc -out ./travis_id_rsa -d
+      - chmod 600 travis_id_rsa
+      - echo "$SERVER_PUBLIC_SSH" >> $HOME/.ssh/known_hosts
+    install:
+      - npm i
+      - npm i webpack-cli
+    script:
+      - cargo build --release
+      - npx webpack-cli --mode production
+      - ssh -i travis_id_rsa staging@laps.website sudo systemctl stop staging.service
+      - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml staging@laps.website:~
+      - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart staging.service
+  - stage: deploy production
+    language: rust
+    rust: nightly
+    os: linux
+    dist: bionic
+    before_install:
+      - nvm install 13.8
+      - openssl aes-256-cbc -K $encrypted_be519dac41c7_key -iv $encrypted_be519dac41c7_iv
+        -in travis_id_rsa.enc -out ./travis_id_rsa -d
+      - chmod 600 travis_id_rsa
+      - echo "$SERVER_PUBLIC_SSH" >> $HOME/.ssh/known_hosts
+    install:
+      - npm i
+      - npm i webpack-cli
+    script:
+      - cargo build --release
+      - npx webpack-cli --mode production
+      - ssh -i travis_id_rsa production@laps.website sudo systemctl stop production.service
+      - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml production@laps.website:~
+      - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart production.service
+stages:
+  - test
+  - name: deploy staging
+    if: branch = staging
+  - name: deploy production
+    if: branch = production
