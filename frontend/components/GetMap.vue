@@ -3,7 +3,7 @@
     <!-- add an input field and adds it vue reactive elements-->
     Request map by ID<input v-model="map_id" />
     <button v-on:click="fetchMap">Get Map</button>
-    
+
     <!-- creates a new template wich is only displayed if a map is recived-->
 
     <template v-if="pictureRecived == true"
@@ -16,7 +16,6 @@
         <!-- Calls the component DrawCords-->
         <draw-cordinates />
       </div>
-
     </template>
   </div>
 </template>
