@@ -3,7 +3,7 @@
 #[macro_use]
 extern crate quick_error;
 #[macro_use]
-extern crate tracing;
+extern crate log;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -11,8 +11,7 @@ extern crate rocket;
 
 use config::Config;
 use darkredis::ConnectionPool;
-use std::net;
-use tracing::Level;
+use rocket::config::{Environment, LoggingLevel};
 
 mod module_handling;
 mod types;
@@ -26,17 +25,13 @@ struct Configuration {
 
 #[derive(serde::Deserialize)]
 struct RedisConfig {
-    address: net::IpAddr,
-    port: u16,
+    address: String,
     password: Option<String>,
 }
 
 lazy_static! {
     //Make this a static global to access it easily across the application
     static ref CONFIG: Configuration = {
-        let span = warn_span!("config");
-        let _guard = span.enter();
-
         //Main config file
         let mut s = Config::new();
         info!("Loading default configuration...");
@@ -65,15 +60,11 @@ lazy_static! {
 }
 
 async fn create_redis_pool() -> ConnectionPool {
-    let span = span!(Level::INFO, "redis");
-    let _guard = span.enter();
-
     let redis_conf = &CONFIG.redis;
-    let address = net::SocketAddr::new(redis_conf.address, redis_conf.port);
-    info!("Connecting to Redis at {}", address);
+    info!("Connecting to Redis at {}", redis_conf.address);
 
     let pool = ConnectionPool::create(
-        address.to_string(),
+        redis_conf.address.clone(),
         redis_conf.password.as_deref(),
         num_cpus::get() * 2,
     )
@@ -90,20 +81,44 @@ async fn create_redis_pool() -> ConnectionPool {
     }
 }
 
-fn setup_tracing() {
-    let var = std::env::var("RUST_LOG").unwrap_or_else(|_| "laps=trace,info".into());
-    tracing_subscriber::FmtSubscriber::builder()
-        .with_target(true)
-        .with_ansi(true)
-        .with_env_filter(tracing_subscriber::EnvFilter::new(var))
+fn setup_logging() {
+    //Set the log level of things.
+    //We want to always have info active for LAPS, but not necesarrily for Rocket.
+
+    //Map the Rocket environment into different log levels.
+    let env = Environment::active().expect("getting rocket environment");
+    let laps_level = match &env {
+        Environment::Development => "trace",
+        Environment::Staging => "debug",
+        Environment::Production => "info",
+    };
+
+    //Set the log levels for Rocket as described in the Rocket documentation
+    let rocket_config = rocket::config::Config::active().expect("getting rocket config");
+    let other_level = match rocket_config.log_level {
+        LoggingLevel::Critical => Some("warn"),
+        LoggingLevel::Normal => Some("info"),
+        LoggingLevel::Debug => Some("trace"),
+        LoggingLevel::Off => None,
+    };
+
+    //Set the environment variable correctly
+    let mut log_value = format!("{}={}", env!("CARGO_PKG_NAME"), laps_level);
+    if let Some(level) = other_level {
+        log_value += &format!(",{}", level);
+    }
+    std::env::set_var("RUST_LOG", &log_value);
+
+    env_logger::Builder::from_default_env()
+        .format_timestamp_secs()
         .init();
 
-    info!("Successfully initialized tracing!");
+    info!("Successfully initialized logging!");
 }
 
 #[tokio::main]
 async fn main() {
-    setup_tracing();
+    setup_logging();
 
     info!("Starting up...");
     web::run().await
