@@ -1,5 +1,4 @@
 <template>
-  
   <!--Loops through all given coordinates and places a red dot-->
   <div id="draw-cordinates">
     <div v-for="(point, index) in recivedCoordinates.points" :key="index">
@@ -26,13 +25,12 @@ export default {
     recivedCoordinates() {
       return store.recivedCoordinates;
     }
-   },
+  },
   props: [],
 
   data: function() {
     return {
-      colour: "red",
-     
+      colour: "red"
     };
   }
 };
