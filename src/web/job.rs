@@ -31,7 +31,7 @@ pub struct JobSubmission {
     algorithm: ModuleInfo,
 }
 
-#[post("/job/submit", format = "json", data = "<job>")]
+#[post("/job", format = "json", data = "<job>")]
 pub async fn submit(
     pool: State<'_, darkredis::ConnectionPool>,
     job: Json<JobSubmission>,
@@ -136,7 +136,7 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
 }
 
 //Get the result of a pathfinding job
-#[get("/job/result/<token>")]
+#[get("/job/<token>")]
 pub async fn result(
     pool: State<'_, ResultConnectionPool>,
     token: String,
@@ -267,7 +267,7 @@ mod test {
             "algorithm": fake_algorithm
         });
         let response = client
-            .post("/job/submit")
+            .post("/job")
             .header(ContentType::JSON)
             .body(&serde_json::to_vec(&job).unwrap())
             .dispatch()
@@ -277,7 +277,7 @@ mod test {
         //Submit a job with an algorithm that actually exists
         job["algorithm"] = serde_json::json!(algorithm);
         let mut response = client
-            .post("/job/submit")
+            .post("/job")
             .header(ContentType::JSON)
             .body(&serde_json::to_vec(&job).unwrap())
             .dispatch()
@@ -287,12 +287,12 @@ mod test {
 
         //Try using a fake token, tokens are never this small so it will never be correct
         let fake_token = "256";
-        let uri = format!("/job/result/{}", fake_token);
+        let uri = format!("/job/{}", fake_token);
         let response = client.get(&uri).dispatch().await;
         assert_eq!(response.status(), Status::NotFound);
 
         //Use the real token, but the job times out:
-        let uri = format!("/job/result/{}", token);
+        let uri = format!("/job/{}", token);
         let response = client.get(&uri).dispatch().await;
         assert_eq!(response.status(), Status::NoContent);
 
@@ -308,7 +308,7 @@ mod test {
             .unwrap();
 
         //Get the data again using the real token, and this time it should actually exist:
-        let uri = format!("/job/result/{}", token);
+        let uri = format!("/job/{}", token);
         let mut response = client.get(&uri).dispatch().await;
         assert_eq!(response.status(), Status::Ok);
         let body = response.body_string().await.unwrap();
@@ -344,14 +344,14 @@ mod test {
             .unwrap();
 
         //Verify that it denies us. Token does not matter.
-        let response = client.get("/job/result/256").dispatch().await;
+        let response = client.get("/job/256").dispatch().await;
         assert_eq!(response.status(), Status::ServiceUnavailable);
 
         //Make room for another client
         conn.decr(rate_limit_key).await.unwrap();
 
         //Verify that we are now accepted but that there's no job with this token.
-        let response = client.get("/job/result/256").dispatch().await;
+        let response = client.get("/job/256").dispatch().await;
         assert_eq!(response.status(), Status::NotFound);
     }
 }
