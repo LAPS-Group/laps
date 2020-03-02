@@ -13,7 +13,7 @@
       <p>
         Start: X:{{ display.data.points[0].x }} Y:{{ display.data.points[0].y }}
       </p>
-      
+
       <!--
       <p>
         End: X:{{ display.data.points[1].x }} Y:{{ display.data.points[1].x }}
