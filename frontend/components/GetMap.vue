@@ -22,6 +22,7 @@
 <script>
 import DrawCordinates from "./DrawCords.vue";
 import axios from "axios";
+import { getRoute } from "route";
 
 export default {
   //defines components used
@@ -48,7 +49,7 @@ export default {
   methods: {
     //Fetch map by user ID
     fetchMap: async function() {
-      this.map = await axios.get(this.map_path + this.map_id);
+      this.map = await axios.get(getRoute(this.map_path + this.map_id));
 
       //Sets that a map is recived and the render can be rendered
       this.pictureRecived = true;
