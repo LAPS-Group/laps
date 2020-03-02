@@ -26,6 +26,9 @@
 import axios from "axios";
 //used to import data from other components
 import { store, mutations } from "../store.js";
+
+import { getRoute } from "route";
+
 export default {
   computed: {
     tester() {
@@ -52,7 +55,7 @@ export default {
       //convert coordinates to JSON
       let message = JSON.stringify(this.coordinates);
       //Send request
-      let res = await axios.post("/job/submit", message, {
+      let res = await axios.post(getRoute("/job/submit"), message, {
         headers: {
           "Content-Type": "application/json"
         }

@@ -10,7 +10,6 @@ new Vue({
   el: "#sendCords",
   render: s => s(SendCords)
 });
-
 new Vue({
   el: "#getMap",
   render: g => g(getMap)
