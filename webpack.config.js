@@ -19,6 +19,7 @@ module.exports = {
           // ... other rules
           {test: /\.vue$/,loader: 'vue-loader'},
           { test: /\.css$/, use: ['vue-style-loader', 'css-loader']},
+          {test: /\.(png|jpe?g|gif)$/i, use: [ {loader: 'file-loader',},],},
         ]
       },
     plugins: [
