@@ -3,7 +3,7 @@ use rocket::{http::ContentType, Response, State};
 use rocket_contrib::{json, json::JsonValue};
 
 //Endpoint for getting map data
-#[get("/maps/<id>")]
+#[get("/map/<id>")]
 pub async fn get_map(pool: State<'_, darkredis::ConnectionPool>, id: i32) -> Option<Response<'_>> {
     let mut conn = pool.get().await;
     match conn
@@ -29,7 +29,7 @@ pub async fn get_map(pool: State<'_, darkredis::ConnectionPool>, id: i32) -> Opt
 }
 
 //Endpoint for listning available maps.
-#[get("/maps/available")]
+#[get("/maps")]
 pub async fn get_maps(pool: State<'_, darkredis::ConnectionPool>) -> JsonValue {
     let mut conn = pool.get().await;
     trace!("Listing maps");
@@ -63,7 +63,7 @@ mod test {
         conn.del(create_redis_key("mapdata")).await.unwrap();
 
         //Verify that there is no registered map data at this time.
-        let mut response = client.get("/maps/available").dispatch().await;
+        let mut response = client.get("/maps").dispatch().await;
         assert_eq!(response.status(), Status::Ok);
         let expected = r#"{"maps":[]}"#.to_string();
         assert_eq!(response.body_string().await, Some(expected));
@@ -74,14 +74,14 @@ mod test {
             .unwrap();
 
         //Verify that the new map is now there
-        let mut response = client.get("/maps/available").dispatch().await;
+        let mut response = client.get("/maps").dispatch().await;
         assert_eq!(response.status(), Status::Ok);
         //Verify that the number of maps is zero.
         let expected = r#"{"maps":["1"]}"#.to_string();
         assert_eq!(response.body_string().await, Some(expected));
 
         //Finally, ensure that we can get the map back
-        let mut response = client.get("/maps/1").dispatch().await;
+        let mut response = client.get("/map/1").dispatch().await;
         assert_eq!(response.status(), Status::Ok);
         assert!(response.content_type().unwrap().is_png());
         assert_eq!(response.body_string().await, Some("FOO".into()));
