@@ -12,7 +12,7 @@ jobs:
     node_js: 13.8
     install:
     - npm install
-    script: bash ./format-check.sh
+    script: bash ./format.sh check
   - stage: deploy staging
     language: rust
     os: linux
