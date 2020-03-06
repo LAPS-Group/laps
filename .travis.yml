@@ -12,7 +12,7 @@ jobs:
     node_js: 13.8
     install:
     - npm install
-    script: bash ./format-check.sh
+    script: bash ./format.sh check
   - stage: deploy staging
     language: rust
     os: linux
@@ -29,7 +29,7 @@ jobs:
       - npm i webpack-cli
     script:
       - cargo build --release
-      - npx webpack-cli --mode production
+      - npm run build_prod
       - ssh -i travis_id_rsa staging@laps.website sudo systemctl stop staging.service
       - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml staging@laps.website:~
       - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart staging.service
@@ -49,7 +49,7 @@ jobs:
       - npm i webpack-cli
     script:
       - cargo build --release
-      - npx webpack-cli --mode production
+      - npm run build_prod
       - ssh -i travis_id_rsa production@laps.website sudo systemctl stop production.service
       - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml production@laps.website:~
       - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart production.service

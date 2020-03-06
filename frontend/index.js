@@ -1,15 +1,16 @@
-import axios from "axios";
 import Vue from "vue";
+//import axios from 'axios';
+//import App from './components/App.vue';
 import SendCords from "./components/SendCords.vue";
-import App from "./components/App.vue";
+import getMap from "./components/GetMap.vue";
+//import DrawCords from './components/DrawCords.vue';
 
-//test app that displays hello world
-new Vue({
-  el: "#app",
-  render: h => h(App)
-});
 //Calls send app, its sends coordinates
 new Vue({
   el: "#sendCords",
   render: s => s(SendCords)
+});
+new Vue({
+  el: "#getMap",
+  render: g => g(getMap)
 });
