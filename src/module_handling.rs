@@ -14,19 +14,18 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
 
     let key = create_redis_backend_key("module-shutdown");
     loop {
-        let shutdown: ModuleInfo = serde_json::from_slice(
-            &conn
-                .blpop(&[&key], 0)
-                .await
-                .expect("popping from shutdown queue")
-                .unwrap()
-                .into_iter()
-                .nth(1)
-                .unwrap(),
-        )
-        .expect("parsing shutdown message");
+        let shutdown: Result<ModuleInfo, BackendError> = conn
+            .blpop(&[&key], 0)
+            .await
+            .transpose()
+            .expect("popping from shutdown queue")
+            .map_err(BackendError::Redis)
+            .and_then(|(_, value)| serde_json::from_slice(&value).map_err(BackendError::JsonError));
 
-        info!("Module {} v{} shut down", shutdown.name, shutdown.version);
+        match shutdown {
+            Ok(info) => info!("Module {} v{} shut down", info.name, info.version),
+            Err(e) => error!("Couldn't parse shutdown message: {}", e),
+        }
     }
 }
 
@@ -45,13 +44,10 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
     let mut buffer = Vec::new();
     loop {
         //Cannot use BRPOPLPUSH here because we have to parse the value
-        let value = conn
+        let (_, value) = conn
             .blpop(&[create_redis_backend_key("path-results")], 0)
             .await
             .expect("popping path results")
-            .unwrap()
-            .into_iter()
-            .nth(1)
             .unwrap();
 
         let deserialized: JobResult = match serde_json::from_slice(&value) {
@@ -100,13 +96,10 @@ pub async fn run(pool: darkredis::ConnectionPool) {
     tokio::spawn(result_listener(pool.clone()));
 
     loop {
-        let data = &conn
+        let (_, data) = &conn
             .blpop(&[create_redis_backend_key("register-module")], 0)
             .await
             .unwrap()
-            .unwrap()
-            .into_iter()
-            .nth(1)
             .unwrap();
 
         let metadata: ModuleInfo = serde_json::from_slice(&data).unwrap();

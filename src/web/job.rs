@@ -165,7 +165,7 @@ pub async fn result(
                 .blpop(&[&job_key], crate::CONFIG.jobs.poll_timeout)
                 .await?
             {
-                Some(v) => {
+                Some((_, value)) => {
                     //Delete the job now that it's been received, and decrement the rate-limiting key.
                     let commands = darkredis::CommandList::new("DEL")
                         .arg(&job_key)
@@ -178,7 +178,6 @@ pub async fn result(
                         .await
                         .unwrap();
 
-                    let value = v.into_iter().nth(1).unwrap();
                     //Cannot fail as it is the same value that gets deserialized in the results receiver
                     let deserialized: JobResult = serde_json::from_slice(&value).unwrap();
 
