@@ -6,12 +6,16 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = [ "laps_convert", "laps_convert_cli" ]
+
 [dependencies]
 base64 = "0.12.0"
 config = { version = "0.10.1", default-features = false, features = ["toml"] }
 darkredis = "0.7.0"
 env_logger = "0.7.1"
 futures = "0.3.4"
+laps_convert = { path = "laps_convert"}
 lazy_static = "1.4.0"
 log = "0.4.8"
 num_cpus = "1.12.0"
@@ -27,3 +31,6 @@ git = "https://github.com/SergioBenitez/Rocket"
 branch = "async"
 features = ["json"]
 default-features = false
+
+[profile.dev.package.png]
+opt-level = 3

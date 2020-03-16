@@ -127,6 +127,9 @@ fn setup_logging() {
 
     //Set the environment variable correctly
     let mut log_value = format!("{}={}", env!("CARGO_PKG_NAME"), laps_level);
+    //Set the same log level for laps_convert
+    log_value += &format!(",laps_convert={}", laps_level);
+
     if let Some(level) = other_level {
         log_value += &format!(",{}", level);
     }
