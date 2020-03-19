@@ -26,7 +26,7 @@ struct JobInfo {
 #[derive(Deserialize)]
 pub struct JobSubmission {
     start: Vector,
-    end: Vector,
+    stop: Vector,
     map_id: i32,
     algorithm: ModuleInfo,
 }
@@ -60,7 +60,7 @@ pub async fn submit(
     let info = JobInfo {
         job_id: job_id as i32,
         start: job.start,
-        stop: job.end,
+        stop: job.stop,
         map_id: job.map_id,
     };
     debug!("Sending job: {:?}", info);
@@ -260,7 +260,7 @@ mod test {
             "start": {
                 "x": 1, "y": 2
             },
-            "end": {
+            "stop": {
                 "x": 1, "y": 2
             },
             "algorithm": fake_algorithm
