@@ -149,3 +149,41 @@ pub async fn get_registered_modules(
     }
     Ok(output)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::util::create_redis_backend_key;
+    use std::time::Duration;
+    use tokio::time;
+
+    #[tokio::test]
+    async fn module_registration() {
+        //setup
+        crate::setup_logging();
+        let pool = crate::create_redis_pool().await;
+        tokio::spawn(super::run(pool.clone()));
+        let mut conn = pool.get().await;
+
+        //Delete all modules
+        let module_key = create_redis_backend_key("registered_modules");
+        conn.del(&module_key).await.unwrap();
+
+        //Register a fake module
+        let module_info = br#"{"name": "test_module", "version": "1.0.0"}"#.to_vec();
+        conn.rpush(create_redis_backend_key("register-module"), &module_info)
+            .await
+            .unwrap();
+
+        //Check that we were actually registered
+        time::delay_for(Duration::from_millis(100)).await; // Might take some time to handle the request so wait for a sec
+        assert!(conn.sismember(&module_key, &module_info).await.unwrap());
+
+        //Deregister ourselves
+        conn.rpush(create_redis_backend_key("module-shutdown"), &module_info)
+            .await
+            .unwrap();
+        time::delay_for(Duration::from_millis(100)).await; // Might take some time to handle the request so wait for a sec
+        assert!(!conn.sismember(&module_key, &module_info).await.unwrap());
+    }
+}
