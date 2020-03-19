@@ -50,6 +50,10 @@ module.exports = env => {
       new HtmlWebpackPlugin({
         filename: "index.html",
         template: "frontend/index.html"
+      }),
+      new HtmlWebpackPlugin({
+        filename: "admin.html",
+        template: "frontend/admin.html"
       })
     ]
   };

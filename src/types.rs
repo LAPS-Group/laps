@@ -35,6 +35,10 @@ quick_error::quick_error! {
         }
         //A pathfinding module gave an incorrect response
         InvalidResponse {}
+        //An IO error happened
+        Io(err: std::io::Error) {
+            from()
+        }
         //Something wrong happened that can't be handled
         Other(msg: String) {
             display("Other error: {}", msg)
@@ -49,6 +53,47 @@ impl<'r> Responder<'r> for BackendError {
         Ok(Response::build()
             .status(Status::InternalServerError)
             .sized_body(error_message)
+            .await
+            .finalize())
+    }
+}
+
+quick_error::quick_error! {
+    ///Error type for errors we want to show the user.
+    #[derive(Debug)]
+    pub enum UserError {
+        Internal(err: BackendError) {
+            from()
+            display("Internal server error")
+        }
+        BadType(got: String, allowed: String) {
+            display("Invalid type \"{}\", expected one of {}", got, allowed)
+        }
+        BadForm(details: String) {
+            display("Invalid form data: {}", details)
+        }
+        MapConvert(err: laps_convert::ConvertError) {
+            from()
+            display("Conversion error: {}", err)
+        }
+    }
+}
+
+#[rocket::async_trait]
+impl<'r> Responder<'r> for UserError {
+    async fn respond_to(self, request: &'r Request<'_>) -> response::Result<'r> {
+        let message = std::io::Cursor::new(format!("{}", &self));
+        let status_code = match self {
+            UserError::Internal(e) => {
+                return e.respond_to(request).await;
+            }
+            UserError::MapConvert(_) => Status::UnprocessableEntity,
+            UserError::BadType(_, _) | UserError::BadForm(_) => Status::BadRequest,
+        };
+
+        Ok(Response::build()
+            .status(status_code)
+            .sized_body(message)
             .await
             .finalize())
     }

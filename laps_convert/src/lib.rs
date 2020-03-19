@@ -128,20 +128,48 @@ where
 }
 
 ///Import `data` into the system as mapdata.
-///# Panics
-///Will panic if it tries to set a map id which already exists, probably from inputting it manually.
 pub async fn import_png_as_mapdata(
     conn: &mut darkredis::Connection,
     data: Vec<u8>,
-) -> Result<(), darkredis::Error> {
-    let map_index = conn.incr("laps.mapdata.id_counter").await?.to_string();
-    if !conn.hsetnx("laps.mapdata", &map_index, data).await? {
+) -> Result<u32, darkredis::Error> {
+    do_import(conn, data, "laps.mapdata").await
+}
+
+//Do the actual import
+async fn do_import(
+    conn: &mut darkredis::Connection,
+    data: Vec<u8>,
+    map_key: &str,
+) -> Result<u32, darkredis::Error> {
+    //Get the biggest unused map id.
+    let mut map_ids: Vec<u32> = conn
+        .hkeys(&map_key)
+        .await?
+        .into_iter()
+        .map(|s| {
+            String::from_utf8_lossy(&s)
+                .parse::<u32>()
+                .expect("parsing map id as usize")
+        })
+        .collect();
+    map_ids.sort_unstable();
+
+    let map_id = map_ids.last().unwrap_or(&0) + 1;
+    if !conn.hsetnx(&map_key, &map_id.to_string(), data).await? {
         //Map data was already set!
         panic!(
             "Tried to set map data field {}, but it already existed!",
-            map_index
+            map_id
         );
     }
 
-    Ok(())
+    Ok(map_id)
+}
+
+///Import `data` into the system as mapdata, but place the result in the testing key rahter than the actual key.
+pub async fn import_png_as_mapdata_test(
+    conn: &mut darkredis::Connection,
+    data: Vec<u8>,
+) -> Result<u32, darkredis::Error> {
+    do_import(conn, data, "laps.testing.mapdata").await
 }

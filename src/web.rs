@@ -1,5 +1,6 @@
 use rocket::response::NamedFile;
 
+mod admin;
 mod algorithms;
 mod job;
 mod map;
@@ -29,6 +30,8 @@ pub async fn run() {
             routes![
                 dist,
                 index,
+                admin::index,
+                admin::new_map,
                 algorithms::list,
                 job::result,
                 job::submit,
