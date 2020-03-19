@@ -14,16 +14,29 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
 
     let key = create_redis_backend_key("module-shutdown");
     loop {
-        let shutdown: Result<ModuleInfo, BackendError> = conn
+        let (_, data) = conn
             .blpop(&[&key], 0)
             .await
-            .transpose()
             .expect("popping from shutdown queue")
-            .map_err(BackendError::Redis)
-            .and_then(|(_, value)| serde_json::from_slice(&value).map_err(BackendError::JsonError));
+            .unwrap();
+        let shutdown: Result<ModuleInfo, BackendError> =
+            serde_json::from_slice(&data).map_err(BackendError::JsonError);
 
         match shutdown {
-            Ok(info) => info!("Module {} v{} shut down", info.name, info.version),
+            Ok(info) => {
+                info!("Module {} v{} shut down", info.name, info.version);
+
+                //Remove from the registered_modules set.
+                //Rely on modules sending the exact same shutdown data as they sent registration data.
+                if !conn
+                    .srem(create_redis_backend_key("registered_modules"), &data)
+                    .await
+                    .expect("Removing from registered-modules set")
+                {
+                    error!("Module {} {} wasn't registered!", info.name, info.version);
+                    trace!("Raw module info: {}", String::from_utf8_lossy(&data));
+                }
+            }
             Err(e) => error!("Couldn't parse shutdown message: {}", e),
         }
     }
