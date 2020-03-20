@@ -43,12 +43,14 @@ pub async fn new_map(
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::util;
     use multipart::client::lazy::Multipart;
     use rocket::{
         http::{ContentType, Status},
         local::Client,
     };
     use std::io::Read;
+
     #[tokio::test]
     async fn upload_map() {
         //Setup rocket instance

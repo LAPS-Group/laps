@@ -152,7 +152,6 @@ pub async fn get_registered_modules(
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::util::create_redis_backend_key;
     use std::time::Duration;
     use tokio::time;
