@@ -23,6 +23,7 @@ mod web;
 struct Configuration {
     pub redis: RedisConfig,
     pub jobs: JobConfig,
+    pub login: LoginConfig
 }
 
 #[derive(serde::Deserialize)]
@@ -43,6 +44,12 @@ struct JobConfig {
     //Additional connections to use in addition to max_polling clients,
     //in order to quickly deny additional clients
     additional_connections: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct LoginConfig {
+    //Timeout in seconds for sessions
+    session_timeout: u32
 }
 
 lazy_static! {

@@ -31,6 +31,7 @@ pub async fn run() {
                 dist,
                 index,
                 admin::index,
+                admin::login,
                 admin::new_map,
                 algorithms::list,
                 job::result,

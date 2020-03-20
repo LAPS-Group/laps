@@ -1,9 +1,17 @@
-use crate::types::{BackendError, UserError};
-use rocket::{request::State, response::NamedFile};
+use crate::{
+    types::{BackendError, UserError},
+    util,
+};
+use darkredis::Value;
+use rand::RngCore;
+use rocket::{
+    http::{Cookie, Cookies, SameSite, Status},
+    request::{Form, State},
+    response::NamedFile,
+};
 use rocket_contrib::json::Json;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-mod adminsession;
 mod mapuploadrequest;
 
 use mapuploadrequest::MapUploadRequest;
@@ -44,15 +52,87 @@ pub async fn new_map(
 }
 
 #[derive(FromForm)]
-struct AdminLogin {
+pub struct AdminLogin {
     username: String,
     password: String,
+}
+
+#[post("/login", data = "<login>")]
+pub async fn login(
+    pool: State<'_, darkredis::ConnectionPool>,
+    login: Form<AdminLogin>,
+    mut cookies: Cookies<'_>,
+) -> Result<Status, BackendError> {
+    let mut conn = pool.get().await;
+
+    //We should store the administrators in the following way:
+    //Key laps.backend.admins.<name.lower()>
+    //contains the admin's name, salted hashed password and salt.
+
+    let key = util::get_admin_key(&login.username);
+    //TODO Replace with hmget builder in darkredis when that comes along
+    let command = darkredis::Command::new("HMGET")
+        .arg(&key)
+        .arg(b"hash")
+        .arg(b"salt");
+    let (hash, salt) = match conn.run_command(command).await? {
+        Value::Array(arr) => {
+            let mut iter = arr.into_iter();
+            let hash = iter.next().unwrap();
+            if let Value::Nil = hash {
+                //Do not leak information to the client about which part of the authentication failed.
+                debug!(
+                    "Attempted to authenticate {} but account does not exist",
+                    login.username
+                );
+                return Ok(Status::Forbidden);
+            }
+            //Assume that the salt is defined if the hash is.
+            (hash.unwrap_string(), iter.next().unwrap().unwrap_string())
+        }
+        //An error would have occured in run_command if there was a problem. Therefore the response will
+        //only ever contain an array.
+        _ => unreachable!(),
+    };
+
+    //Verify that the password matches
+    if hash == util::calculate_password_hash(&login.password, &salt) {
+        //yay!
+        info!("Successfully authenticated admin {}", login.username);
+
+        //Generate session identifier, rand::thread_rng() is again considered cryptographically secure.
+        //ThreadRng does not implement send so make it short-lived
+        let token = {
+            let mut rng = rand::thread_rng();
+            let mut buffer = vec![0u8; 256];
+            rng.fill_bytes(&mut buffer);
+            base64::encode(buffer)
+        };
+
+        //Register the session in the database
+        let session_key = util::get_session_key(&token);
+        conn.set_and_expire_seconds(&session_key, &token, crate::CONFIG.login.session_timeout)
+            .await?;
+
+        //Create and set session cookie
+        let cookie = Cookie::build("session-token", token)
+            .http_only(true)
+            .same_site(SameSite::Strict)
+            .finish();
+        cookies.add_private(cookie);
+
+        //Done logging in!
+        Ok(Status::Ok)
+    } else {
+        Ok(Status::Forbidden)
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::util;
+    use futures::StreamExt;
     use multipart::client::lazy::Multipart;
     use rocket::{
         http::{ContentType, Status},
@@ -114,5 +194,89 @@ mod test {
             serde_json::from_slice::<u32>(&response.body_bytes().await.unwrap()).unwrap(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn login() {
+        //Setup rocket instance
+        let redis = crate::create_redis_pool().await;
+        let rocket = rocket::ignite()
+            .mount("/", routes![login])
+            .manage(redis.clone());
+        let client = Client::new(rocket).unwrap();
+        let mut conn = redis.get().await;
+
+        //Delete any existing users and sessions
+        let users = conn
+            .scan()
+            .pattern(b"laps.testing.admins.*")
+            .run()
+            .collect::<Vec<Vec<u8>>>()
+            .await;
+        let sessions = conn
+            .scan()
+            .pattern(b"laps.testing.sessions.*")
+            .run()
+            .collect::<Vec<Vec<u8>>>()
+            .await;
+        let deletions: Vec<Vec<u8>> = users.into_iter().chain(sessions.into_iter()).collect();
+        if !deletions.is_empty() {
+            conn.del_slice(&deletions).await.unwrap();
+        }
+
+        //Register a fake account
+        let username = "test-admin";
+        let admin_key = util::get_admin_key("test-admin");
+        let salt = util::generate_salt();
+        let password = "password";
+        let hash = util::calculate_password_hash(&password, &salt);
+        let builder = darkredis::MSetBuilder::new()
+            .set(b"hash", &hash)
+            .set(b"salt", &salt);
+        conn.hset_many(&admin_key, builder).await.unwrap();
+
+        //Try to login with a fake account
+        let form = format!("username={}&password={}", "does-not-exist", "password");
+        let response = client
+            .post("/login")
+            .body(&form)
+            .header(ContentType::Form)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Forbidden);
+        assert!(response.cookies().is_empty());
+
+        //Try to login with the wrong password
+        let form = format!("username={}&password={}", username, "incorrect-password");
+        let response = client
+            .post("/login")
+            .body(&form)
+            .header(ContentType::Form)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Forbidden);
+        assert!(response.cookies().is_empty());
+
+        //Login with the correct password
+        let form = format!("username={}&password={}", username, password);
+        let response = client
+            .post("/login")
+            .body(&form)
+            .header(ContentType::Form)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        assert_eq!(response.cookies().len(), 1);
+
+        //Login again, but this time using all uppercase letters
+        let form = format!("username={}&password={}", username.to_uppercase(), password);
+        let response = client
+            .post("/login")
+            .body(&form)
+            .header(ContentType::Form)
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Ok);
+        assert_eq!(response.cookies().len(), 1);
     }
 }

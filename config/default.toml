@@ -21,3 +21,8 @@ poll_timeout = 120
 max_polling_clients = 256
 # The number of extra connections to use for the job polling connection pool, to allow sending a 504
 additional_connections = 2
+
+[login]
+# How long a session needs to be inactive for to expire in seconds.
+# The timeout is reset every time the session gets used.
+session_timeout = 3600
