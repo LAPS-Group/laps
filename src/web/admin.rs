@@ -3,7 +3,10 @@ use rocket::{request::State, response::NamedFile};
 use rocket_contrib::json::Json;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-mod map_upload;
+mod adminsession;
+mod mapuploadrequest;
+
+use mapuploadrequest::MapUploadRequest;
 
 #[get("/admin")]
 pub async fn index() -> Option<NamedFile> {
@@ -13,7 +16,7 @@ pub async fn index() -> Option<NamedFile> {
 #[post("/map", data = "<upload>")]
 pub async fn new_map(
     pool: State<'_, darkredis::ConnectionPool>,
-    upload: map_upload::MapUploadRequest,
+    upload: MapUploadRequest,
 ) -> Result<Json<u32>, UserError> {
     let mut conn = pool.get().await;
     //If we're in test mode, do not convert. We won't be testing the conversion here, just the endpoint.
@@ -38,6 +41,12 @@ pub async fn new_map(
             .expect("importing map data")
     };
     Ok(Json(map_id))
+}
+
+#[derive(FromForm)]
+struct AdminLogin {
+    username: String,
+    password: String,
 }
 
 #[cfg(test)]
