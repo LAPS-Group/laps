@@ -39,7 +39,7 @@ impl FromDataSimple for MapUploadRequest {
             return Box::pin(async move {
                 Outcome::Failure((
                     Status::BadRequest,
-                    UserError::BadType(content_type.into(), "[multipart/form-data]".into()),
+                    UserError::BadType(content_type, "[multipart/form-data]".into()),
                 ))
             });
         }
