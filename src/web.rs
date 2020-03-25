@@ -1,4 +1,5 @@
 use rocket::response::NamedFile;
+use rocket_contrib::serve::StaticFiles;
 
 mod algorithms;
 mod job;
@@ -36,6 +37,7 @@ pub async fn run() {
                 map::get_maps,
             ],
         )
+        .mount("/images", StaticFiles::from("dist/images"))
         .manage(pool)
         .manage(result_pool)
         .serve()

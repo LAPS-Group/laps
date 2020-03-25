@@ -6,7 +6,6 @@
     End X <br /><input v-model="coordinates.stop.x" /> <br />
     End Y <br />
     <input v-model="coordinates.stop.y" /> <br />
-    <img src="<%=require('/../../dist/LAPS1.png')%>" />
 
     <!--Map Id <input v-model="map_id" > <br />-->
 
