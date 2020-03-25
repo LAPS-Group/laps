@@ -1,8 +1,13 @@
 <template>
   <div id="getMap">
     <!-- add an input field and adds it vue reactive elements-->
-    Request map by ID<input v-model="map_id" />
-    <button v-on:click="fetchMap">Get Map</button>
+
+    Select Map ID
+    <br />
+    <input v-model="map_id" @change="getMap" />
+    <br />
+
+    <button v-on:click="getMap">Get Map</button>
 
     <!-- creates a new template wich is only displayed if a map is recived-->
 
@@ -11,7 +16,7 @@
 
       <div class="map">
         <div class="mapcontainer">
-          <img src="http://localhost:8000/maps/1" />
+          <img :src="this.map_link" />
         </div>
         <!-- Calls the component DrawCords-->
         <draw-cordinates />
@@ -23,6 +28,7 @@
 import DrawCordinates from "./DrawCords.vue";
 import axios from "axios";
 import { getRoute } from "route";
+import { store, mutations } from "../store.js";
 
 export default {
   //defines components used
@@ -36,24 +42,26 @@ export default {
       pictureRecived: false,
       map: null,
       map_id: null,
-      map_path: "/maps/",
-      colour: "red",
-      x: 50,
-      y: 45,
-      DrawCordsTest: 1,
-      user: {
-        username: "noe"
-      }
+      map_path: "/map/",
+
+      map_link: ""
     };
   },
+
   methods: {
+    getMap: function() {
+      this.map_link = getRoute(this.map_path + this.map_id);
+      this.pictureRecived = true;
+      console.log(this.map_link);
+      mutations.setmap_id(this.map_id);
+    }
     //Fetch map by user ID
-    fetchMap: async function() {
-      this.map = await axios.get(getRoute(this.map_path + this.map_id));
+    /*fetchMap: async function() {
+      //this.map = await axios.get(getRoute(this.map_path + this.map_id));
 
       //Sets that a map is recived and the render can be rendered
       this.pictureRecived = true;
-    }
+    }*/
   }
 };
 </script>
@@ -78,5 +86,7 @@ canvas {
 .map {
   align-items: flex-start;
   position: relative;
+  float: left;
+  left: 300px;
 }
 </style>
