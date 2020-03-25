@@ -1,5 +1,6 @@
 <template>
   <div id="getAlgorithm">
+    <br />
     <div class="dropDown">
       <vue-dropdown
         :config="config"
