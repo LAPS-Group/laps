@@ -12,7 +12,9 @@ jobs:
     node_js: 13.8
     install:
     - npm install
-    script: bash ./format.sh check
+    script:
+      - bash ./format.sh check
+      - npm run build
   - stage: deploy staging
     language: rust
     os: linux
@@ -28,11 +30,11 @@ jobs:
       - npm i
       - npm i webpack-cli
     script:
-      - cargo build --release
-      - npm run build_prod
-      - ssh -i travis_id_rsa staging@laps.website sudo systemctl stop staging.service
-      - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml staging@laps.website:~
-      - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart staging.service
+      - cargo build --release || exit 1
+      - npm run build_prod || exit 1
+      - ssh -i travis_id_rsa staging@laps.website sudo systemctl stop staging.service || exit 1
+      - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml staging@laps.website:~ || exit 1
+      - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart staging.service || exit 1
   - stage: deploy production
     language: rust
     rust: nightly
@@ -48,11 +50,11 @@ jobs:
       - npm i
       - npm i webpack-cli
     script:
-      - cargo build --release
-      - npm run build_prod
-      - ssh -i travis_id_rsa production@laps.website sudo systemctl stop production.service
-      - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml production@laps.website:~
-      - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart production.service
+      - cargo build --release || exit 1
+      - npm run build_prod || exit 1
+      - ssh -i travis_id_rsa production@laps.website sudo systemctl stop production.service || exit 1
+      - scp -r -i travis_id_rsa dist config target/release/laps Rocket.toml production@laps.website:~ || exit 1
+      - ssh -i travis_id_rsa staging@laps.website sudo systemctl restart production.service || exit 1
 stages:
   - test
   - name: deploy staging
