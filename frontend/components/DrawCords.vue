@@ -3,11 +3,11 @@
   <div id="draw-cordinates">
     <div v-for="(point, index) in recivedCoordinates.points" :key="index">
       <canvas
-        width="5"
-        height="5"
+        width="2"
+        height="2"
         v-bind:style="{
-          top: recivedCoordinates.points[index].x + 'px',
-          left: recivedCoordinates.points[index].y + 'px',
+          left: recivedCoordinates.points[index].x + 'px',
+          top: recivedCoordinates.points[index].y + 'px',
           backgroundColor: colour,
           Zindex: 1
         }"
