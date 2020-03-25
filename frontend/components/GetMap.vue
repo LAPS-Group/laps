@@ -1,7 +1,7 @@
 <template>
   <div id="getMap">
     <!-- add an input field and adds it vue reactive elements-->
-
+    <br />
     Select Map ID
     <br />
     <input v-model="map_id" @change="getMap" />
