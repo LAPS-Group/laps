@@ -25,5 +25,5 @@ tokio = { version = "0.2.11", features = ["full"] }
 [dependencies.rocket_contrib]
 git = "https://github.com/SergioBenitez/Rocket"
 branch = "async"
-features = ["json"]
+features = ["json", "serve"]
 default-features = false
