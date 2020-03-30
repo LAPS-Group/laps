@@ -159,7 +159,6 @@ mod test {
     #[tokio::test]
     async fn module_registration() {
         //setup
-        crate::setup_logging();
         let pool = crate::create_redis_pool().await;
         tokio::spawn(super::run(pool.clone()));
         let mut conn = pool.get().await;
