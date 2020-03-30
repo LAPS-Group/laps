@@ -31,6 +31,48 @@ pub struct JobSubmission {
     algorithm: ModuleInfo,
 }
 
+impl JobSubmission {
+    //Check if `self` is a valid job. Returns (isvalid, errormessage).
+    pub async fn validity_check(
+        &self,
+        redis: &mut darkredis::Connection,
+    ) -> Result<(bool, &'static str), BackendError> {
+        //Check that the start and end points are not the same
+        if self.start == self.stop {
+            return Ok((false, "Start and end points are equal"));
+        }
+
+        //Check that the algorithm requested actually exists
+        let modules = crate::module_handling::get_registered_modules(redis).await?;
+        if !modules.contains(&self.algorithm) {
+            return Ok((false, "Module does not exist"));
+        }
+
+        let mapdata_key = util::create_redis_key("mapdata");
+        //Check that the requested map actually exists.
+        if let Some(data) = redis.hget(mapdata_key, self.map_id.to_string()).await? {
+            //Verify that the job is within the bounds of the map
+            let decoder = png::Decoder::new(data.as_slice());
+
+            let (info, _) = decoder
+                .read_info()
+                .map_err(|s| BackendError::Other(format!("PNG error: {}", s)))?;
+            //No need to check if they're negative as the type only allows for u32.
+            //Only check the biggest one
+            let max_x = self.start.x.max(self.stop.x);
+            let max_y = self.start.y.max(self.stop.y);
+            let out = info.width > max_x && info.height > max_y;
+            if out {
+                Ok((true, ""))
+            } else {
+                Ok((false, "Points are out of bounds"))
+            }
+        } else {
+            Ok((false, "Invalid map id"))
+        }
+    }
+}
+
 #[post("/job", format = "json", data = "<job>")]
 pub async fn submit(
     pool: State<'_, darkredis::ConnectionPool>,
@@ -38,19 +80,8 @@ pub async fn submit(
 ) -> Result<Response<'_>, BackendError> {
     let mut conn = pool.get().await;
 
-    //Does this pathfinding module exist?
-    let modules = crate::module_handling::get_registered_modules(&mut conn).await?;
-    if !modules.contains(&job.algorithm) {
-        //No, send a 404
-        return Ok(Response::build()
-            .status(Status::NotFound)
-            .sized_body(Cursor::new("No such module"))
-            .await
-            .finalize());
-    }
-
-    //Try to find the job in the cache.
-    let cache_key = util::get_job_cache_key(&job.0);
+    //Try to find the job in the cache. If it is in the cache, we can assume that the job submission has been validated already.
+    let cache_key = util::get_job_cache_key(&job);
     if let Some(v) = conn.get(&cache_key).await? {
         //Already cached, just return the job token we have stored instead of performing the job again.
 
@@ -85,6 +116,21 @@ pub async fn submit(
             .finalize());
     }
 
+    //Before we do anything, verify that the request is actually valid.
+    match job.validity_check(&mut conn).await {
+        Ok((true, _)) => (),
+        Ok((false, msg)) => {
+            return Ok(Response::build()
+                .status(Status::BadRequest)
+                .sized_body(std::io::Cursor::new(msg))
+                .await
+                .finalize())
+        }
+        Err(e) => {
+            error!("Failed to check job validity {}", &e);
+            return Err(e);
+        }
+    }
     //TODO Find a random job id
     let job_id = conn
         .incr(util::create_redis_backend_key("job_id"))
@@ -258,6 +304,7 @@ mod test {
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
         util::clear_redis(&mut conn).await;
+        crate::test::insert_test_mapdata(&mut conn).await;
 
         //Add a fake algorithm
         let algorithm_key = create_redis_backend_key("registered_modules");
@@ -279,7 +326,7 @@ mod test {
                 "x": 1, "y": 2
             },
             "stop": {
-                "x": 1, "y": 2
+                "x": 2, "y": 1
             },
             "algorithm": fake_algorithm
         });
@@ -289,7 +336,7 @@ mod test {
             .body(&serde_json::to_vec(&job).unwrap())
             .dispatch()
             .await;
-        assert_eq!(response.status(), Status::NotFound);
+        assert_eq!(response.status(), Status::BadRequest);
 
         //Submit a job with an algorithm that actually exists
         job["algorithm"] = serde_json::json!(algorithm);
@@ -317,7 +364,7 @@ mod test {
         let job_id = 1;
         let info = JobResult {
             job_id,
-            points: vec![Vector { x: 0.0, y: 0.0 }, Vector { x: 0.0, y: 0.0 }],
+            points: vec![Vector { x: 0, y: 0 }, Vector { x: 0, y: 0 }],
         };
         let key = util::get_job_key(job_id);
         conn.set(key, serde_json::to_vec(&info).unwrap())
@@ -334,8 +381,8 @@ mod test {
             points,
             serde_json::json!({
                 "points": [
-                    { "x": 0.0, "y": 0.0 },
-                    { "x": 0.0, "y": 0.0 },
+                    { "x": 0, "y": 0 },
+                    { "x": 0, "y": 0 },
                 ]
             })
         );
@@ -376,6 +423,7 @@ mod test {
     //Test that we avoid unnecesarry calculations of the same job.
     #[tokio::test]
     async fn job_cache() {
+        //setup
         let redis_pool = crate::create_redis_pool().await;
         let mut conn = redis_pool.get().await;
         let rocket = rocket::ignite()
@@ -384,9 +432,10 @@ mod test {
         let client = Client::new(rocket).unwrap();
         util::clear_redis(&mut conn).await;
 
+        crate::test::insert_test_mapdata(&mut conn).await;
+
         //Register a fake module
         let algorithm_key = create_redis_backend_key("registered_modules");
-        conn.del(&algorithm_key).await.unwrap();
         let algorithm = ModuleInfo {
             name: "dummy".to_string(),
             version: "0.0.0".to_string(),
@@ -401,7 +450,7 @@ mod test {
               "x": 1, "y": 2
           },
           "stop": {
-              "x": 1, "y": 2
+              "x": 2, "y": 1
           },
           "algorithm": algorithm
         });
@@ -426,9 +475,9 @@ mod test {
 
         //Submit a new job and verify that it actually sends it.
         let job = serde_json::json!({
-            "map_id": 2,
+            "map_id": 1,
             "start": {
-                "x": 1, "y": 2
+                "x": 2, "y": 1
             },
             "stop": {
                 "x": 1, "y": 2
@@ -443,5 +492,79 @@ mod test {
             .await;
         assert_eq!(response.status(), Status::Accepted);
         assert_ne!(response.body_bytes().await.unwrap(), first_token);
+    }
+
+    #[tokio::test]
+    async fn job_validation() {
+        //Setup
+        let redis_pool = crate::create_redis_pool().await;
+        let mut redis = redis_pool.get().await;
+        util::clear_redis(&mut redis).await;
+
+        //Insert test mapdata
+        let (width, height) = crate::test::insert_test_mapdata(&mut redis).await;
+
+        //Insert a module
+        let algorithm_key = create_redis_backend_key("registered_modules");
+        let algorithm = ModuleInfo {
+            name: "dummy".to_string(),
+            version: "0.0.0".to_string(),
+        };
+        let json = serde_json::to_vec(&algorithm).unwrap();
+        redis.sadd(algorithm_key, json).await.unwrap();
+
+        let mut job_submission = JobSubmission {
+            start: Vector { x: 0, y: 100 },
+            stop: Vector { x: 0, y: 100 },
+            map_id: 1,
+            algorithm,
+        };
+
+        macro_rules! check_valid {
+            () => {
+                assert!(job_submission.validity_check(&mut redis).await.unwrap().0);
+            };
+        }
+        macro_rules! check_invalid {
+            () => {
+                assert!(!job_submission.validity_check(&mut redis).await.unwrap().0);
+            };
+        }
+
+        //Equal start and stop points
+        check_invalid!();
+        job_submission.stop.y = 50;
+
+        //Map Id is valid
+        check_valid!();
+
+        //Invalid module
+        job_submission.algorithm.version = "0.1.0".to_string();
+        check_invalid!();
+
+        //Invalid Map ID
+        job_submission.map_id = 2;
+        job_submission.algorithm.version = "0.0.0".to_string();
+        check_invalid!();
+
+        //Out of bounds
+        job_submission.map_id = 1;
+        check_valid!(); //Check that it's ok again
+        job_submission.start.x = width + 200;
+        check_invalid!();
+        job_submission.start.x = 0;
+        check_valid!(); //Check that it's ok again
+        job_submission.start.y = height + 300;
+        check_invalid!();
+        job_submission.start.y = 0;
+        check_valid!(); //Check that it's ok again
+
+        //Out of bounds, but this time for the stop point
+        job_submission.stop.x = width + 200;
+        check_invalid!();
+        job_submission.stop.x = 0;
+        check_valid!(); //Check that it's ok again
+        job_submission.stop.y = height + 300;
+        check_invalid!();
     }
 }
