@@ -18,10 +18,22 @@ module.exports = env => {
       filename: "main.js",
       path: path.resolve(__dirname, "dist")
     },
+    devServer: {
+      disableHostCheck: true,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods":
+          "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "X-Requested-With, content-type, Authorization"
+      }
+    },
     resolve: {
       alias: {
         vue$: "vue/dist/vue.esm.js",
-        route: path.resolve(__dirname, routeAlias)
+        route: path.resolve(__dirname, routeAlias),
+        images: path.resolve(__dirname, "frontend/images")
       }
     },
     module: {
@@ -37,11 +49,16 @@ module.exports = env => {
         },
         {
           test: /\.(png|jpe?g|gif)$/i,
-          use: [
-            {
-              loader: "file-loader"
-            }
-          ]
+          loader: "file-loader",
+          options: {
+            outputPath: "images",
+            publicPath: "images",
+            emitFile: true
+          }
+        },
+        {
+          test: /\.scss$/,
+          use: ["vue-style-loader", "css-loader", "sass-loader"]
         }
       ]
     },

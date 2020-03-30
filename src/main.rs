@@ -18,6 +18,9 @@ mod types;
 mod util;
 mod web;
 
+#[cfg(test)]
+mod test;
+
 //Struct describing the format of the configuration files
 #[derive(serde::Deserialize)]
 struct Configuration {
@@ -37,6 +40,7 @@ struct JobConfig {
     //Timeouts in seconds for different purposes
     token_timeout: u32,  // the timeout for a token mapping key
     poll_timeout: u32,   // the amount of time a user can poll a running job
+    poll_times: u32,     // the number of times to poll each job
     result_timeout: u32, // how long the results of a pathfinding job is kept
 
     //Number of maximum polling clients at once

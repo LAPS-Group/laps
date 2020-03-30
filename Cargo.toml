@@ -21,6 +21,7 @@ lazy_static = "1.4.0"
 log = "0.4.8"
 multipart = { default-features = false, version = "0.16.1", features = ["server"] }
 num_cpus = "1.12.0"
+png = "0.16.1"
 quick-error = "1.2.3"
 rand = "0.7.3"
 rocket = { git = "https://github.com/SergioBenitez/Rocket/", branch = "async" }
@@ -32,7 +33,7 @@ tokio = { version = "0.2.11", features = ["full"] }
 [dependencies.rocket_contrib]
 git = "https://github.com/SergioBenitez/Rocket"
 branch = "async"
-features = ["json"]
+features = ["json", "serve"]
 default-features = false
 
 [dev-dependencies.multipart]
