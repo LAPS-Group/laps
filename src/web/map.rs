@@ -46,6 +46,7 @@ pub async fn get_maps(pool: State<'_, darkredis::ConnectionPool>) -> JsonValue {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::util;
     use rocket::{http::Status, local::Client};
 
     //Test the listing of available maps and getting of map data
@@ -58,9 +59,7 @@ mod test {
             .mount("/", routes![get_map, get_maps])
             .manage(redis.clone());
         let client = Client::new(rocket).unwrap();
-
-        //Clean up previous map data
-        conn.del(create_redis_key("mapdata")).await.unwrap();
+        util::clear_redis(&mut conn).await;
 
         //Verify that there is no registered map data at this time.
         let mut response = client.get("/maps").dispatch().await;

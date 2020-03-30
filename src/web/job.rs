@@ -1,6 +1,6 @@
 use crate::{
     module_handling::ModuleInfo,
-    types::{BackendError, JobResult, Vector},
+    types::{BackendError, Vector},
     util,
 };
 use futures::TryStreamExt;
@@ -23,7 +23,7 @@ struct JobInfo {
 }
 
 //A job request from the frontend.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct JobSubmission {
     start: Vector,
     stop: Vector,
@@ -45,6 +45,42 @@ pub async fn submit(
         return Ok(Response::build()
             .status(Status::NotFound)
             .sized_body(Cursor::new("No such module"))
+            .await
+            .finalize());
+    }
+
+    //Try to find the job in the cache.
+    let cache_key = util::get_job_cache_key(&job.0);
+    if let Some(v) = conn.get(&cache_key).await? {
+        //Already cached, just return the job token we have stored instead of performing the job again.
+
+        //Reset the time to live of the job mapping
+        let job_timeout = crate::CONFIG.jobs.result_timeout.to_string();
+        let job_mapping_key = util::get_job_mapping_key(&*String::from_utf8_lossy(&v));
+        let mut commands = darkredis::CommandList::new("EXPIRE")
+            .arg(&cache_key)
+            .arg(&job_timeout)
+            .command("EXPIRE")
+            .arg(&job_mapping_key)
+            .arg(&job_timeout);
+
+        //Reset the time to live for the job key as well.
+        //Bind job_key here to resolve a lifetime issue
+        let job_key;
+        if let Some(k) = conn.get(&job_mapping_key).await? {
+            job_key = util::get_job_key(String::from_utf8_lossy(&k).parse().unwrap());
+            commands = commands.command("EXPIRE").arg(&job_key).arg(&job_timeout);
+        }
+
+        conn.run_commands(commands)
+            .await?
+            .try_collect::<Vec<darkredis::Value>>()
+            .await?;
+
+        return Ok(Response::build()
+            .status(Status::Accepted)
+            .header(ContentType::Plain)
+            .sized_body(Cursor::new(v))
             .await
             .finalize());
     }
@@ -81,6 +117,11 @@ pub async fn submit(
     )
     .await
     .unwrap();
+
+    //Create a cache element such that the job is already in the cache.
+    let token_clone = token.clone();
+    conn.set_and_expire_seconds(cache_key, token_clone, crate::CONFIG.jobs.token_timeout)
+        .await?;
 
     //All is good, do things
     let response = Response::build()
@@ -160,30 +201,16 @@ pub async fn result(
         Ok(Some(k)) => {
             //Poll for a result on this job
             let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
-            let job_key = util::get_job_key(job_id);
-            match conn
-                .blpop(&[&job_key], crate::CONFIG.jobs.poll_timeout)
-                .await?
-            {
-                Some((_, value)) => {
-                    //Delete the job now that it's been received, and decrement the rate-limiting key.
-                    let commands = darkredis::CommandList::new("DEL")
-                        .arg(&job_key)
-                        .command("DECR")
-                        .arg(&rate_limit_key);
-                    conn.run_commands(commands)
-                        .await
-                        .unwrap()
-                        .try_collect::<Vec<darkredis::Value>>()
-                        .await
-                        .unwrap();
+
+            match util::try_poll_job_result(&mut conn, job_id).await {
+                Some(result) => {
+                    //Decrement the rate-limiting key.
+                    conn.decr(&rate_limit_key).await?;
 
                     //Cannot fail as it is the same value that gets deserialized in the results receiver
-                    let deserialized: JobResult = serde_json::from_slice(&value).unwrap();
-
                     //Hide the job_id field from the user
                     let json =
-                        Cursor::new(serde_json::json!({"points": deserialized.points}).to_string());
+                        Cursor::new(serde_json::json!({"points": result.points}).to_string());
                     let response = Response::build()
                         .status(Status::Ok)
                         .header(ContentType::JSON)
@@ -214,7 +241,7 @@ pub async fn result(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{module_handling::ModuleInfo, util::create_redis_backend_key};
+    use crate::{module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key};
     use rocket::{http::Status, local::Client};
 
     //Test that submitting and receiving of jobs works
@@ -230,25 +257,16 @@ mod test {
             .manage(redis_result_pool)
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
+        util::clear_redis(&mut conn).await;
 
-        //Remove all algorithms, add a fake one
+        //Add a fake algorithm
         let algorithm_key = create_redis_backend_key("registered_modules");
-        conn.del(&algorithm_key).await.unwrap();
         let algorithm = ModuleInfo {
             name: "dummy".to_string(),
             version: "0.0.0".to_string(),
         };
         let json = serde_json::to_vec(&algorithm).unwrap();
         conn.sadd(algorithm_key, json).await.unwrap();
-        //Clear ratelimiter
-        conn.del(create_redis_backend_key("job_poll_ratelimiter"))
-            .await
-            .unwrap();
-
-        //Reset the job_id counter to ensure a generated job has ID 1
-        conn.del(util::create_redis_backend_key("job_id"))
-            .await
-            .unwrap();
 
         //Submit a dummy job with an algorithm that doesn't exist
         let fake_algorithm = ModuleInfo {
@@ -302,7 +320,7 @@ mod test {
             points: vec![Vector { x: 0.0, y: 0.0 }, Vector { x: 0.0, y: 0.0 }],
         };
         let key = util::get_job_key(job_id);
-        conn.lpush(key, serde_json::to_vec(&info).unwrap())
+        conn.set(key, serde_json::to_vec(&info).unwrap())
             .await
             .unwrap();
 
@@ -334,6 +352,7 @@ mod test {
             .manage(redis_result_pool)
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
+        util::clear_redis(&mut conn).await;
 
         //Simulate too many clients connecting at once
         let max_clients = crate::CONFIG.jobs.max_polling_clients;
@@ -352,5 +371,77 @@ mod test {
         //Verify that we are now accepted but that there's no job with this token.
         let response = client.get("/job/256").dispatch().await;
         assert_eq!(response.status(), Status::NotFound);
+    }
+
+    //Test that we avoid unnecesarry calculations of the same job.
+    #[tokio::test]
+    async fn job_cache() {
+        let redis_pool = crate::create_redis_pool().await;
+        let mut conn = redis_pool.get().await;
+        let rocket = rocket::ignite()
+            .mount("/", routes![submit])
+            .manage(redis_pool.clone());
+        let client = Client::new(rocket).unwrap();
+        util::clear_redis(&mut conn).await;
+
+        //Register a fake module
+        let algorithm_key = create_redis_backend_key("registered_modules");
+        conn.del(&algorithm_key).await.unwrap();
+        let algorithm = ModuleInfo {
+            name: "dummy".to_string(),
+            version: "0.0.0".to_string(),
+        };
+        let json = serde_json::to_vec(&algorithm).unwrap();
+        conn.sadd(algorithm_key, json).await.unwrap();
+
+        //Submit a job
+        let job = serde_json::json!({
+          "map_id": 1,
+          "start": {
+              "x": 1, "y": 2
+          },
+          "stop": {
+              "x": 1, "y": 2
+          },
+          "algorithm": algorithm
+        });
+        let mut response = client
+            .post("/job")
+            .header(ContentType::JSON)
+            .body(&serde_json::to_vec(&job).unwrap())
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Accepted);
+        let first_token = response.body_bytes().await.unwrap();
+
+        //Submit the job again and verify that it maps to the same token
+        let mut response = client
+            .post("/job")
+            .header(ContentType::JSON)
+            .body(&serde_json::to_vec(&job).unwrap())
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Accepted);
+        assert_eq!(response.body_bytes().await.unwrap(), first_token);
+
+        //Submit a new job and verify that it actually sends it.
+        let job = serde_json::json!({
+            "map_id": 2,
+            "start": {
+                "x": 1, "y": 2
+            },
+            "stop": {
+                "x": 1, "y": 2
+            },
+            "algorithm": algorithm
+        });
+        let mut response = client
+            .post("/job")
+            .header(ContentType::JSON)
+            .body(&serde_json::to_vec(&job).unwrap())
+            .dispatch()
+            .await;
+        assert_eq!(response.status(), Status::Accepted);
+        assert_ne!(response.body_bytes().await.unwrap(), first_token);
     }
 }

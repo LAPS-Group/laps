@@ -14,7 +14,7 @@ pub async fn list(pool: State<'_, ConnectionPool>) -> Result<Json<Vec<ModuleInfo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::util::create_redis_backend_key;
+    use crate::util::{self, create_redis_backend_key};
     use rocket::{http::Status, local::Client};
 
     //Test the listing of algorithms
@@ -27,10 +27,7 @@ mod test {
             .manage(redis.clone());
         let client = Client::new(rocket).unwrap();
         let mut conn = redis.get().await;
-
-        // Ensure there are no algorithms available
-        let module_key = create_redis_backend_key("registered_modules");
-        conn.del(&module_key).await.unwrap();
+        util::clear_redis(&mut conn).await;
 
         //Macro to make this test easier to read
         macro_rules! check {
@@ -58,6 +55,7 @@ mod test {
             name: "dummy".to_string(),
             version: "0".to_string(),
         };
+        let module_key = create_redis_backend_key("registered_modules");
         conn.sadd(&module_key, &serde_json::to_vec(&dummy).unwrap())
             .await
             .unwrap();
