@@ -10,8 +10,8 @@ use std::io::Cursor;
 //General vector type to be used internally
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct Vector {
-    pub x: f32,
-    pub y: f32,
+    pub x: u32,
+    pub y: u32,
 }
 
 //Struct for storing the ouptut of a pathfinding job.

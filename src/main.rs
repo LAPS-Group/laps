@@ -18,6 +18,9 @@ mod types;
 mod util;
 mod web;
 
+#[cfg(test)]
+mod test;
+
 //Struct describing the format of the configuration files
 #[derive(serde::Deserialize)]
 struct Configuration {
