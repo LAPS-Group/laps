@@ -18,3 +18,14 @@ pub async fn insert_test_mapdata(conn: &mut darkredis::Connection) -> (u32, u32)
 
     (info.width, info.height)
 }
+
+//A nice function for resetting only the test part of the database.
+#[cfg(test)]
+pub async fn clear_redis(conn: &mut darkredis::Connection) {
+    use futures::StreamExt;
+
+    let keys: Vec<Vec<u8>> = conn.scan().pattern(b"laps.testing.*").run().collect().await;
+    for k in keys {
+        conn.del(&k).await.unwrap();
+    }
+}

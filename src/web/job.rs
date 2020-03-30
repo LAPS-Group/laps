@@ -303,7 +303,7 @@ mod test {
             .manage(redis_result_pool)
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
-        util::clear_redis(&mut conn).await;
+        crate::test::clear_redis(&mut conn).await;
         crate::test::insert_test_mapdata(&mut conn).await;
 
         //Add a fake algorithm
@@ -399,7 +399,7 @@ mod test {
             .manage(redis_result_pool)
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
-        util::clear_redis(&mut conn).await;
+        crate::test::clear_redis(&mut conn).await;
 
         //Simulate too many clients connecting at once
         let max_clients = crate::CONFIG.jobs.max_polling_clients;
@@ -430,8 +430,7 @@ mod test {
             .mount("/", routes![submit])
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
-        util::clear_redis(&mut conn).await;
-
+        crate::test::clear_redis(&mut conn).await;
         crate::test::insert_test_mapdata(&mut conn).await;
 
         //Register a fake module
@@ -499,7 +498,7 @@ mod test {
         //Setup
         let redis_pool = crate::create_redis_pool().await;
         let mut redis = redis_pool.get().await;
-        util::clear_redis(&mut redis).await;
+        crate::test::clear_redis(&mut redis).await;
 
         //Insert test mapdata
         let (width, height) = crate::test::insert_test_mapdata(&mut redis).await;

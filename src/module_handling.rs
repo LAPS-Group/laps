@@ -145,10 +145,9 @@ mod test {
         let pool = crate::create_redis_pool().await;
         tokio::spawn(super::run(pool.clone()));
         let mut conn = pool.get().await;
+        crate::test::clear_redis(&mut conn).await;
 
-        //Delete all modules
         let module_key = create_redis_backend_key("registered_modules");
-        conn.del(&module_key).await.unwrap();
 
         //Register a fake module
         let module_info = br#"{"name": "test_module", "version": "1.0.0"}"#.to_vec();

@@ -25,17 +25,6 @@ pub fn create_redis_backend_key(name: &str) -> String {
     format!("laps.testing.backend.{}", name)
 }
 
-//A nice function for resetting the entire testing database.
-#[cfg(test)]
-pub async fn clear_redis(conn: &mut darkredis::Connection) {
-    use futures::StreamExt;
-
-    let keys: Vec<Vec<u8>> = conn.scan().pattern(b"laps.testing.*").run().collect().await;
-    for k in keys {
-        conn.del(&k).await.unwrap();
-    }
-}
-
 //Get the job queue key for `module`.
 pub fn get_module_key(module: &ModuleInfo) -> String {
     let prefix = create_redis_key("runner");

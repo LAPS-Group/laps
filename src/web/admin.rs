@@ -149,11 +149,7 @@ mod test {
             .manage(redis.clone());
         let client = Client::new(rocket).unwrap();
         let mut conn = redis.get().await;
-
-        //Remove all mapdata
-        let mapdata_key = util::create_redis_key("mapdata");
-        dbg!(&mapdata_key);
-        conn.del(&mapdata_key).await.unwrap();
+        crate::test::clear_redis(&mut conn).await;
 
         //Create a multipart form in the format which is expected by the add map endpoint.
         let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -205,6 +201,7 @@ mod test {
             .manage(redis.clone());
         let client = Client::new(rocket).unwrap();
         let mut conn = redis.get().await;
+        crate::test::clear_redis(&mut conn).await;
 
         //Delete any existing users and sessions
         let users = conn
