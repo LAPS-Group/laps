@@ -12,12 +12,14 @@ use rocket::{
 use rocket_contrib::json::Json;
 use tokio::{fs::File, io::AsyncWriteExt};
 
+mod adminsession;
 mod mapuploadrequest;
 
+use adminsession::AdminSession;
 use mapuploadrequest::MapUploadRequest;
 
 #[get("/admin")]
-pub async fn index() -> Option<NamedFile> {
+pub async fn index(_session: AdminSession) -> Option<NamedFile> {
     NamedFile::open("dist/admin.html").ok()
 }
 
@@ -25,6 +27,7 @@ pub async fn index() -> Option<NamedFile> {
 pub async fn new_map(
     pool: State<'_, darkredis::ConnectionPool>,
     upload: MapUploadRequest,
+    session: AdminSession,
 ) -> Result<Json<u32>, UserError> {
     let mut conn = pool.get().await;
     //If we're in test mode, do not convert. We won't be testing the conversion here, just the endpoint.
@@ -44,9 +47,15 @@ pub async fn new_map(
             .expect("writing map data to temporary file");
 
         let image = laps_convert::create_normalized_png(path)?;
-        laps_convert::import_png_as_mapdata(&mut conn, image.data)
+        let result = laps_convert::import_png_as_mapdata(&mut conn, image.data)
             .await
-            .expect("importing map data")
+            .expect("importing map data");
+
+        info!(
+            "Admin {} uploaded a new map with ID {}",
+            session.username, result
+        );
+        result
     };
     Ok(Json(map_id))
 }
@@ -74,21 +83,28 @@ pub async fn login(
     let command = darkredis::Command::new("HMGET")
         .arg(&key)
         .arg(b"hash")
-        .arg(b"salt");
-    let (hash, salt) = match conn.run_command(command).await? {
+        .arg(b"salt")
+        .arg(b"super");
+    let (hash, salt, is_super) = match conn.run_command(command).await? {
         Value::Array(arr) => {
             let mut iter = arr.into_iter();
             let hash = iter.next().unwrap();
             if let Value::Nil = hash {
                 //Do not leak information to the client about which part of the authentication failed.
-                debug!(
+                warn!(
                     "Attempted to authenticate {} but account does not exist",
                     login.username
                 );
                 return Ok(Status::Forbidden);
             }
-            //Assume that the salt is defined if the hash is.
-            (hash.unwrap_string(), iter.next().unwrap().unwrap_string())
+
+            //Extract other values
+            let hash = hash.unwrap_string();
+            let salt = iter.next().unwrap().unwrap_string();
+            let is_super = String::from_utf8_lossy(&iter.next().unwrap().unwrap_string())
+                .parse::<isize>()
+                .unwrap();
+            (hash, salt, is_super != 0)
         }
         //An error would have occured in run_command if there was a problem. Therefore the response will
         //only ever contain an array.
@@ -109,10 +125,20 @@ pub async fn login(
             base64::encode(buffer)
         };
 
+        //Create the session object
+        let session = AdminSession {
+            username: login.username.to_lowercase(),
+            is_super,
+        };
+
         //Register the session in the database
         let session_key = util::get_session_key(&token);
-        conn.set_and_expire_seconds(&session_key, &token, crate::CONFIG.login.session_timeout)
-            .await?;
+        conn.set_and_expire_seconds(
+            &session_key,
+            serde_json::to_vec(&session).unwrap(),
+            crate::CONFIG.login.session_timeout,
+        )
+        .await?;
 
         //Create and set session cookie
         let cookie = Cookie::build("session-token", token)
@@ -124,6 +150,7 @@ pub async fn login(
         //Done logging in!
         Ok(Status::Ok)
     } else {
+        warn!("Failed authentication attempt for user {}", login.username);
         Ok(Status::Forbidden)
     }
 }
@@ -132,7 +159,6 @@ pub async fn login(
 mod test {
     use super::*;
     use crate::util;
-    use futures::StreamExt;
     use multipart::client::lazy::Multipart;
     use rocket::{
         http::{ContentType, Status},
@@ -141,15 +167,40 @@ mod test {
     use std::io::Read;
 
     #[tokio::test]
+    //Will always fail if the login test below fails.
     async fn upload_map() {
         //Setup rocket instance
         let redis = crate::create_redis_pool().await;
         let rocket = rocket::ignite()
-            .mount("/", routes![new_map])
+            .mount("/", routes![new_map, login])
             .manage(redis.clone());
         let client = Client::new(rocket).unwrap();
         let mut conn = redis.get().await;
         crate::test::clear_redis(&mut conn).await;
+
+        //Register a test super admin
+        let username = "test-admin";
+        let admin_key = util::get_admin_key("test-admin");
+        let salt = util::generate_salt();
+        let password = "password";
+        let hash = util::calculate_password_hash(&password, &salt);
+        let builder = darkredis::MSetBuilder::new()
+            .set(b"hash", &hash)
+            .set(b"salt", &salt)
+            .set(b"super", b"1");
+        conn.hset_many(&admin_key, builder).await.unwrap();
+
+        //Sign in
+        //Create form
+        let payload = format!("username={}&password={}", username, password);
+        let response = client
+            .post("/login")
+            .header(ContentType::Form)
+            .body(&payload)
+            .dispatch()
+            .await;
+        //Keep track of the cookies as they're used to verify that we're logged in
+        let response_cookies = response.cookies();
 
         //Create a multipart form in the format which is expected by the add map endpoint.
         let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -162,11 +213,14 @@ mod test {
         multipart.read_to_end(&mut form).unwrap();
 
         //Insert some map data
-        let mut request = client.post("/map").header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary.clone()),
-        ));
+        let mut request = client
+            .post("/map")
+            .header(ContentType::with_params(
+                "multipart",
+                "form-data",
+                ("boundary", boundary.clone()),
+            ))
+            .cookies(response_cookies.clone());
         request.set_body(form.as_slice());
         let mut response = request.dispatch().await;
         assert_eq!(response.status(), Status::Ok);
@@ -177,11 +231,14 @@ mod test {
         );
 
         //And create another to ensure that it gets the correct ID.
-        let mut request = client.post("/map").header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary.clone()),
-        ));
+        let mut request = client
+            .post("/map")
+            .header(ContentType::with_params(
+                "multipart",
+                "form-data",
+                ("boundary", boundary.clone()),
+            ))
+            .cookies(response_cookies);
         request.set_body(form.as_slice());
         let mut response = request.dispatch().await;
         assert_eq!(response.status(), Status::Ok);
@@ -203,25 +260,7 @@ mod test {
         let mut conn = redis.get().await;
         crate::test::clear_redis(&mut conn).await;
 
-        //Delete any existing users and sessions
-        let users = conn
-            .scan()
-            .pattern(b"laps.testing.admins.*")
-            .run()
-            .collect::<Vec<Vec<u8>>>()
-            .await;
-        let sessions = conn
-            .scan()
-            .pattern(b"laps.testing.sessions.*")
-            .run()
-            .collect::<Vec<Vec<u8>>>()
-            .await;
-        let deletions: Vec<Vec<u8>> = users.into_iter().chain(sessions.into_iter()).collect();
-        if !deletions.is_empty() {
-            conn.del_slice(&deletions).await.unwrap();
-        }
-
-        //Register a fake account
+        //Register a test super admin
         let username = "test-admin";
         let admin_key = util::get_admin_key("test-admin");
         let salt = util::generate_salt();
@@ -229,7 +268,8 @@ mod test {
         let hash = util::calculate_password_hash(&password, &salt);
         let builder = darkredis::MSetBuilder::new()
             .set(b"hash", &hash)
-            .set(b"salt", &salt);
+            .set(b"salt", &salt)
+            .set(b"super", b"1");
         conn.hset_many(&admin_key, builder).await.unwrap();
 
         //Try to login with a fake account
