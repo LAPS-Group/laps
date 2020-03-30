@@ -131,6 +131,42 @@ pub async fn submit(
             return Err(e);
         }
     }
+    //Try to find the job in the cache.
+    let cache_key = util::get_job_cache_key(&job.0);
+    if let Some(v) = conn.get(&cache_key).await? {
+        //Already cached, just return the job token we have stored instead of performing the job again.
+
+        //Reset the time to live of the job mapping
+        let job_timeout = crate::CONFIG.jobs.result_timeout.to_string();
+        let job_mapping_key = util::get_job_mapping_key(&*String::from_utf8_lossy(&v));
+        let mut commands = darkredis::CommandList::new("EXPIRE")
+            .arg(&cache_key)
+            .arg(&job_timeout)
+            .command("EXPIRE")
+            .arg(&job_mapping_key)
+            .arg(&job_timeout);
+
+        //Reset the time to live for the job key as well.
+        //Bind job_key here to resolve a lifetime issue
+        let job_key;
+        if let Some(k) = conn.get(&job_mapping_key).await? {
+            job_key = util::get_job_key(String::from_utf8_lossy(&k).parse().unwrap());
+            commands = commands.command("EXPIRE").arg(&job_key).arg(&job_timeout);
+        }
+
+        conn.run_commands(commands)
+            .await?
+            .try_collect::<Vec<darkredis::Value>>()
+            .await?;
+
+        return Ok(Response::build()
+            .status(Status::Accepted)
+            .header(ContentType::Plain)
+            .sized_body(Cursor::new(v))
+            .await
+            .finalize());
+    }
+
     //TODO Find a random job id
     let job_id = conn
         .incr(util::create_redis_backend_key("job_id"))

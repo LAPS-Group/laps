@@ -14,7 +14,7 @@ pub async fn list(pool: State<'_, ConnectionPool>) -> Result<Json<Vec<ModuleInfo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::util::create_redis_backend_key;
+    use crate::util::{self, create_redis_backend_key};
     use rocket::{http::Status, local::Client};
     use serial_test::serial;
 
