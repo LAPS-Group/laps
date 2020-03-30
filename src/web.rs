@@ -1,9 +1,9 @@
 use rocket::response::NamedFile;
 use rocket_contrib::serve::StaticFiles;
 
-mod algorithms;
-mod job;
-mod map;
+pub mod algorithms;
+pub mod job;
+pub mod map;
 
 //End points for getting the frontend code
 #[get("/")]

@@ -2,7 +2,6 @@ use crate::{
     types::{BackendError, JobResult},
     util::{create_redis_backend_key, get_job_key},
 };
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 //Handle any modules unregistrering themselves in a loop, forever.
@@ -41,7 +40,6 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
     let mut conn = pool.spawn("result-listener").await.unwrap();
 
     //Push every single result to their corresponding job id key and expire it
-    let mut buffer = Vec::new();
     loop {
         //Cannot use BRPOPLPUSH here because we have to parse the value
         let (_, value) = conn
@@ -64,23 +62,8 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
         let key = get_job_key(deserialized.job_id);
 
         //Expire after a given period if the result has not been retrieved by the user
-        let timeout = crate::CONFIG.jobs.result_timeout.to_string();
-        let command = darkredis::CommandList::new("LPUSH")
-            .arg(&key)
-            .arg(&value)
-            .command("EXPIRE")
-            .arg(&key)
-            .arg(&timeout);
-
         //TODO: Maybe set the mapping key timeout to match the result timeout
-
-        let results = conn
-            .run_commands_with_buffer(command, &mut buffer)
-            .await
-            .unwrap();
-
-        results
-            .try_collect::<Vec<darkredis::Value>>()
+        conn.set_and_expire_seconds(&key, &value, crate::CONFIG.jobs.result_timeout)
             .await
             .unwrap();
     }
