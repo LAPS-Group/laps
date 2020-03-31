@@ -60,6 +60,24 @@ pub async fn new_map(
     Ok(Json(map_id))
 }
 
+#[delete("/map/<id>")]
+pub async fn delete_map(
+    pool: State<'_, darkredis::ConnectionPool>,
+    session: AdminSession,
+    id: i32,
+) -> Result<Status, BackendError> {
+    //We're already authenticated, just get rid of the map in question.
+    let mut conn = pool.get().await;
+    let mapdata_key = util::create_redis_key("mapdata");
+    let id = id.to_string();
+    if conn.hdel(mapdata_key, &id).await? {
+        info!("Map {} deleted by {}", id, session.username);
+        Ok(Status::NoContent)
+    } else {
+        Ok(Status::NotFound)
+    }
+}
+
 #[derive(FromForm)]
 pub struct AdminLogin {
     username: String,
@@ -162,18 +180,11 @@ mod test {
     };
     use std::io::Read;
 
-    #[tokio::test]
-    //Will always fail if the login test below fails.
-    async fn upload_map() {
-        //Setup rocket instance
-        let redis = crate::create_redis_pool().await;
-        let rocket = rocket::ignite()
-            .mount("/", routes![new_map, login])
-            .manage(redis.clone());
-        let client = Client::new(rocket).unwrap();
-        let mut conn = redis.get().await;
-        crate::test::clear_redis(&mut conn).await;
-
+    //Create an account and sign in for use in these tests
+    async fn create_account_and_login(
+        conn: &mut darkredis::Connection,
+        client: &Client,
+    ) -> Vec<Cookie<'static>> {
         //Register a test super admin
         let username = "test-admin";
         let admin_key = util::get_admin_key("test-admin");
@@ -196,7 +207,27 @@ mod test {
             .dispatch()
             .await;
         //Keep track of the cookies as they're used to verify that we're logged in
-        let response_cookies = response.cookies();
+        response
+            .cookies()
+            .into_iter()
+            .map(|s| s.into_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    //Will always fail if the login test below fails.
+    async fn map_manipulation() {
+        //Setup rocket instance
+        let redis = crate::create_redis_pool().await;
+        let rocket = rocket::ignite()
+            .mount("/", routes![new_map, login, delete_map])
+            .manage(redis.clone());
+        let client = Client::new(rocket).unwrap();
+        let mut conn = redis.get().await;
+        crate::test::clear_redis(&mut conn).await;
+
+        //Keep track of the cookies as they're used to verify that we're logged in
+        let response_cookies = create_account_and_login(&mut conn, &client).await;
 
         //Create a multipart form in the format which is expected by the add map endpoint.
         let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -234,7 +265,7 @@ mod test {
                 "form-data",
                 ("boundary", boundary.clone()),
             ))
-            .cookies(response_cookies);
+            .cookies(response_cookies.clone());
         request.set_body(form.as_slice());
         let mut response = request.dispatch().await;
         assert_eq!(response.status(), Status::Ok);
@@ -243,6 +274,16 @@ mod test {
             serde_json::from_slice::<u32>(&response.body_bytes().await.unwrap()).unwrap(),
             2
         );
+
+        //Test that deletion works.
+        let request = client.delete("/map/2").cookies(response_cookies.clone());
+        let response = request.dispatch().await;
+        assert_eq!(response.status(), Status::NoContent);
+
+        //Try to delete it again and fail.
+        let request = client.delete("/map/2").cookies(response_cookies);
+        let response = request.dispatch().await;
+        assert_eq!(response.status(), Status::NotFound);
     }
 
     #[tokio::test]

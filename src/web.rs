@@ -29,12 +29,13 @@ pub async fn run() {
         .mount(
             "/",
             routes![
-                dist,
-                index,
+                admin::delete_map,
                 admin::index,
                 admin::login,
                 admin::new_map,
                 algorithms::list,
+                dist,
+                index,
                 job::result,
                 job::submit,
                 map::get_map,
