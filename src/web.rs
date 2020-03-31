@@ -33,6 +33,7 @@ pub async fn run() {
                 admin::index,
                 admin::login,
                 admin::new_map,
+                admin::show_errors,
                 algorithms::list,
                 dist,
                 index,

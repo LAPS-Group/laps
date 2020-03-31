@@ -1,13 +1,15 @@
 use crate::{
+    module_handling::{ModuleError, ModuleInfo},
     types::{BackendError, UserError},
     util,
 };
-use darkredis::Value;
+use darkredis::{ConnectionPool, Value};
 use rand::RngCore;
 use rocket::{
-    http::{Cookie, Cookies, SameSite, Status},
+    http::{ContentType, Cookie, Cookies, SameSite, Status},
     request::{Form, State},
     response::NamedFile,
+    Response,
 };
 use rocket_contrib::json::Json;
 use tokio::{fs::File, io::AsyncWriteExt};
@@ -25,7 +27,7 @@ pub async fn index(_session: AdminSession) -> Option<NamedFile> {
 
 #[post("/map", data = "<upload>")]
 pub async fn new_map(
-    pool: State<'_, darkredis::ConnectionPool>,
+    pool: State<'_, ConnectionPool>,
     upload: MapUploadRequest,
     session: AdminSession,
 ) -> Result<Json<u32>, UserError> {
@@ -62,7 +64,7 @@ pub async fn new_map(
 
 #[delete("/map/<id>")]
 pub async fn delete_map(
-    pool: State<'_, darkredis::ConnectionPool>,
+    pool: State<'_, ConnectionPool>,
     session: AdminSession,
     id: i32,
 ) -> Result<Status, BackendError> {
@@ -76,6 +78,25 @@ pub async fn delete_map(
     } else {
         Ok(Status::NotFound)
     }
+}
+
+#[get("/modules/errors")]
+pub async fn show_errors(
+    pool: State<'_, ConnectionPool>,
+    _session: AdminSession,
+) -> Result<Json<Vec<ModuleError>>, BackendError> {
+    //Grab all recent errors.
+    let mut conn = pool.get().await;
+    let key = util::create_redis_backend_key("recent-errors");
+    let len = conn.llen(&key).await?.unwrap();
+    let output: Vec<ModuleError> = conn
+        .lrange(key, 0, len)
+        .await?
+        .into_iter()
+        .map(|e| serde_json::from_slice(&e).unwrap())
+        .collect();
+
+    Ok(Json(output))
 }
 
 #[derive(FromForm)]
@@ -352,5 +373,66 @@ mod test {
             .await;
         assert_eq!(response.status(), Status::Ok);
         assert_eq!(response.cookies().len(), 1);
+    }
+
+    #[tokio::test]
+    //Fails if login test fails
+    async fn list_errors() {
+        //Setup rocket instance
+        let redis = crate::create_redis_pool().await;
+        let rocket = rocket::ignite()
+            .mount("/", routes![login, show_errors])
+            .manage(redis.clone());
+        let client = Client::new(rocket).unwrap();
+        let mut conn = redis.get().await;
+        crate::test::clear_redis(&mut conn).await;
+
+        let cookies = create_account_and_login(&mut conn, &client).await;
+
+        //Quick macro to check the response
+        macro_rules! check_response {
+            ($input:expr) => {
+                let mut response = client
+                    .get("/modules/errors")
+                    .cookies(cookies.clone())
+                    .dispatch()
+                    .await;
+                assert_eq!(response.status(), Status::Ok);
+                assert_eq!(response.content_type(), Some(ContentType::JSON));
+                let result: Vec<ModuleError> =
+                    serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
+                assert_eq!(result, $input);
+            };
+        }
+
+        //Verify that no errors are present
+        check_response!(vec![]);
+
+        //add an error
+        let module = ModuleInfo {
+            name: "fake-module".into(),
+            version: "0".into(),
+        };
+        let fake_error = ModuleError {
+            instant: 100,
+            module,
+            message: "hello".into(),
+        };
+        let error_key = util::create_redis_backend_key("recent-errors");
+        conn.rpush(&error_key, serde_json::to_vec(&fake_error).unwrap())
+            .await
+            .unwrap();
+
+        //Verify that there's one
+        check_response!(vec![fake_error.clone()]);
+
+        //Add another one to check that the order is correct
+        let mut other_error = fake_error.clone();
+        other_error.message = "goodbye".to_string();
+        conn.rpush(&error_key, serde_json::to_vec(&other_error).unwrap())
+            .await
+            .unwrap();
+
+        check_response!(vec![fake_error, other_error]);
     }
 }
