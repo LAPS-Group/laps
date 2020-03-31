@@ -85,31 +85,27 @@ pub async fn login(
         .arg(b"hash")
         .arg(b"salt")
         .arg(b"super");
-    let (hash, salt, is_super) = match conn.run_command(command).await? {
-        Value::Array(arr) => {
-            let mut iter = arr.into_iter();
-            let hash = iter.next().unwrap();
-            if let Value::Nil = hash {
-                //Do not leak information to the client about which part of the authentication failed.
-                warn!(
-                    "Attempted to authenticate {} but account does not exist",
-                    login.username
-                );
-                return Ok(Status::Forbidden);
-            }
 
-            //Extract other values
-            let hash = hash.unwrap_string();
-            let salt = iter.next().unwrap().unwrap_string();
-            let is_super = String::from_utf8_lossy(&iter.next().unwrap().unwrap_string())
-                .parse::<isize>()
-                .unwrap();
-            (hash, salt, is_super != 0)
-        }
-        //An error would have occured in run_command if there was a problem. Therefore the response will
-        //only ever contain an array.
-        _ => unreachable!(),
-    };
+    //Get the results
+    let mut iter = conn.run_command(command).await?.unwrap_array().into_iter();
+    let hash = iter.next().unwrap();
+    //The values will be Nil if the key doesn't exist
+    if let Value::Nil = hash {
+        //Do not leak information to the client about which part of the authentication failed.
+        warn!(
+            "Attempted to authenticate {} but account does not exist",
+            login.username
+        );
+        return Ok(Status::Forbidden);
+    }
+
+    //Extract other values, assuming that the data is valid and that all fields are present
+    let hash = hash.unwrap_string();
+    let salt = iter.next().unwrap().unwrap_string();
+    let is_super = String::from_utf8_lossy(&iter.next().unwrap().unwrap_string())
+        .parse::<isize>()
+        .unwrap()
+        != 0;
 
     //Verify that the password matches
     if hash == util::calculate_password_hash(&login.password, &salt) {
