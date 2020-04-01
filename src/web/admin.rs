@@ -2,17 +2,23 @@ use crate::{
     module_handling::{ModuleError, ModuleInfo},
     types::{BackendError, UserError},
     util,
+    web::multipart::MultipartForm,
+};
+use bollard::{
+    container::ListContainersOptions,
+    image::{APIImages, CreateImageOptions, CreateImageResults, ListImagesOptions},
+    Docker,
 };
 use darkredis::{ConnectionPool, Value};
 use rand::RngCore;
 use rocket::{
-    http::{ContentType, Cookie, Cookies, SameSite, Status},
+    http::{Cookie, Cookies, SameSite, Status},
     request::{Form, State},
     response::NamedFile,
-    Response,
 };
 use rocket_contrib::json::Json;
-use tokio::{fs::File, io::AsyncWriteExt};
+use serde::{Deserialize, Serialize};
+use tokio::{fs::File, io::AsyncWriteExt, stream::StreamExt};
 
 mod adminsession;
 mod mapuploadrequest;
@@ -190,16 +196,124 @@ pub async fn login(
     }
 }
 
+//Return value for the module structs, with an additional field to determine if a module is currently running.
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct PathModule {
+    running: bool,
+    #[serde(flatten)]
+    module: ModuleInfo,
+}
+
+#[get("/module/all")]
+pub async fn get_all_modules(
+    docker: State<'_, Docker>,
+    _session: AdminSession,
+) -> Result<Json<Vec<PathModule>>, BackendError> {
+    fn extract_module_info_from_tag(tag: &str) -> ModuleInfo {
+        //A valid tag will always have the format "a:b"
+        tag.find(':')
+            .map(|s| ModuleInfo {
+                name: tag[..s].to_string(),
+                version: tag[s + 1..].to_string(),
+            })
+            .unwrap()
+    }
+
+    //Mostly just list available docker images to create
+    let images: Vec<APIImages> = docker
+        .list_images(None::<ListImagesOptions<String>>)
+        .await?;
+
+    let running_containers: Vec<ModuleInfo> = docker
+        .list_containers(None::<ListContainersOptions<String>>)
+        .await?
+        .into_iter()
+        .map(|s| extract_module_info_from_tag(&s.image))
+        .collect();
+
+    let mut out = Vec::new();
+    for image in images {
+        //The repo_tags field will always have at least one element in it if it's `Some`.
+        if let Some(tag) = image.repo_tags.map(|mut t| t.pop().unwrap()) {
+            //A valid tag created by the backend will always have a version.
+            let module = extract_module_info_from_tag(&tag);
+
+            //Check if the container we just found is actually running
+            let running = running_containers.iter().any(|s| s == &module);
+            out.push(PathModule { running, module });
+        }
+    }
+    Ok(Json(out))
+}
+
+#[post("/module", data = "<form>")]
+pub async fn upload_module(
+    mut form: MultipartForm,
+    docker: State<'_, Docker>,
+    _session: AdminSession,
+) -> Result<(), UserError> {
+    //Get the required fields out of the form.
+    let name = form
+        .get_text("name")
+        .ok_or_else(|| UserError::BadForm("Missing name".into()))?;
+    let version = form
+        .get_text("version")
+        .ok_or_else(|| UserError::BadForm("Missing version".into()))?;
+
+    //Accept both .tar and .gz for the Docker image.
+    lazy_static::lazy_static! {
+        static ref X_TAR: mime::Mime = "application/x-tar".parse().unwrap();
+        static ref X_TAR_GZ: mime::Mime = "application/x-tar+gz".parse().unwrap();
+    };
+    let module = form
+        .get_file(&*X_TAR, "module")
+        .or_else(|| form.get_file(&*X_TAR_GZ, "module"))
+        .ok_or_else(|| UserError::BadForm("Expected module with type application/x-tar".into()))?;
+
+    //Validation
+    //Check the name
+    if name.chars().any(|c| c == ':') {
+        dbg!(&name);
+        return Err(UserError::BadForm("Name cannot have ':' in it".into()));
+    }
+    //Check that there's no image with the same name and version currently
+
+    //Create the image
+    let options = CreateImageOptions {
+        tag: version.clone(),
+        from_src: "-".to_string(),
+        repo: name.clone(),
+        ..Default::default()
+    };
+    let mut stream = docker.create_image(Some(options), Some(module.into()), None);
+    while let Some(update) = stream.next().await {
+        let update = update.expect("communicating with Docker daemon");
+        println!("Importing {}:{}: {:?}", name, version, update);
+        if let CreateImageResults::CreateImageError {
+            error,
+            error_detail,
+        } = update
+        {
+            error!("Failed to import image {:?}", error_detail);
+            return Err(UserError::ModuleImport(error));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::util;
+    use crate::{module_handling::ModuleInfo, util};
+    use bollard::image::{BuildImageOptions, BuildImageResults};
+    use futures::StreamExt;
     use multipart::client::lazy::Multipart;
     use rocket::{
         http::{ContentType, Status},
         local::Client,
     };
     use std::io::Read;
+    use tokio::{fs::File, io::AsyncReadExt};
 
     //Create an account and sign in for use in these tests
     async fn create_account_and_login(
@@ -434,5 +548,99 @@ mod test {
             .unwrap();
 
         check_response!(vec![fake_error, other_error]);
+    }
+
+    #[tokio::test]
+    //Also fails if login fails
+    async fn get_modules() {
+        //Setup rocket instance
+        let redis = crate::create_redis_pool().await;
+        let docker = crate::connect_to_docker().await;
+        let rocket = rocket::ignite()
+            .mount("/", routes![login, get_all_modules, upload_module])
+            .manage(redis.clone())
+            .manage(crate::connect_to_docker().await);
+        let client = Client::new(rocket).unwrap();
+        let mut conn = redis.get().await;
+        crate::test::clear_redis(&mut conn).await;
+
+        let cookies = create_account_and_login(&mut conn, &client).await;
+
+        //Build the test image
+        let mut file = File::open(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/test_data/test_image.tar"
+        ))
+        .await
+        .unwrap();
+        let mut tarball = Vec::new();
+        file.read_to_end(&mut tarball).await.unwrap();
+        let options = BuildImageOptions {
+            t: "laps-test-image",
+            nocache: true,
+            ..Default::default()
+        };
+        let results: Vec<BuildImageResults> = docker
+            .build_image(options, None, Some(tarball.into()))
+            .map(|r| r.unwrap())
+            .collect()
+            .await;
+        for r in results {
+            println!("{:?}", r);
+            if let BuildImageResults::BuildImageError { .. } = r {
+                panic!("Failed to build image");
+            }
+        }
+        let mut tarball = Vec::new();
+        let mut stream = docker.export_image("laps-test-image");
+        while let Some(s) = stream.next().await {
+            tarball.extend_from_slice(&s.unwrap());
+        }
+
+        //Upload the test image using the thing
+        let module_name = "laps-test";
+        let module_version = "0.1.0";
+        let mut multipart = Multipart::new()
+            .add_stream::<&str, &[u8], &str>(
+                "module",
+                tarball.as_slice(),
+                None,
+                Some("application/x-tar".parse().unwrap()),
+            )
+            .add_text("version", module_version)
+            .add_text("name", module_name)
+            .prepare()
+            .unwrap();
+        let mut form = Vec::new();
+        let boundary = multipart.boundary().to_string();
+        multipart.read_to_end(&mut form).unwrap();
+
+        let mut request = client
+            .post("/module")
+            .header(ContentType::with_params(
+                "multipart",
+                "form-data",
+                ("boundary", boundary.clone()),
+            ))
+            .cookies(cookies.clone());
+        request.set_body(form.as_slice());
+        let response = request.dispatch().await;
+        // let body = response.body_string().await.unwrap();
+        // dbg!(&body);
+        assert_eq!(response.status(), Status::Ok);
+
+        // let module_name = "laps-test";
+        // let module_version = "0.1.0";
+
+        //Check that the test module is returned by /module/all.
+        let mut response = client.get("/module/all").cookies(cookies).dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
+        assert_eq!(response.content_type().unwrap(), ContentType::JSON);
+        let images: Vec<ModuleInfo> =
+            serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
+        images
+            .into_iter()
+            .find(|m| m.name == module_name && m.version == module_version)
+            .unwrap();
     }
 }

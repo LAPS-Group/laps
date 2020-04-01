@@ -5,6 +5,7 @@ mod admin;
 mod algorithms;
 pub mod job;
 mod map;
+mod multipart;
 
 //End points for getting the frontend code
 #[get("/")]
@@ -21,6 +22,8 @@ pub async fn run() {
     let pool = crate::create_redis_pool().await;
     //Create the specialized pool for getting connection results
     let result_pool = job::create_result_redis_pool().await;
+    //Connect to Docker
+    let docker = crate::connect_to_docker().await;
     //Launch module handlers
     tokio::spawn(crate::module_handling::run(pool.clone()));
 
@@ -30,10 +33,12 @@ pub async fn run() {
             "/",
             routes![
                 admin::delete_map,
+                admin::get_all_modules,
                 admin::index,
                 admin::login,
                 admin::new_map,
                 admin::show_errors,
+                admin::upload_module,
                 algorithms::list,
                 dist,
                 index,
@@ -46,6 +51,7 @@ pub async fn run() {
         .mount("/images", StaticFiles::from("dist/images"))
         .manage(pool)
         .manage(result_pool)
+        .manage(docker)
         .serve()
         .await
         .unwrap();

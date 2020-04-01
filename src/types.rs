@@ -33,6 +33,10 @@ quick_error::quick_error! {
             from()
             display("JSON error: {}", err)
         }
+        Docker(err: bollard::errors::Error) {
+            from()
+            display("Docker error: {}", err)
+        }
         //A pathfinding module gave an incorrect response
         InvalidResponse {}
         //An IO error happened
@@ -47,9 +51,11 @@ quick_error::quick_error! {
 }
 
 #[rocket::async_trait]
+#[allow(clippy::needless_lifetimes)]
 impl<'r> Responder<'r> for BackendError {
     async fn respond_to(self, _: &'r Request<'_>) -> response::Result<'r> {
         let error_message = Cursor::new("internal server error");
+        error!("An internal error occurred: {}", self);
         Ok(Response::build()
             .status(Status::InternalServerError)
             .sized_body(error_message)
@@ -76,10 +82,14 @@ quick_error::quick_error! {
             from()
             display("Conversion error: {}", err)
         }
+        ModuleImport(err: String) {
+            display("Importing module image: {}", err)
+        }
     }
 }
 
 #[rocket::async_trait]
+#[allow(clippy::needless_lifetimes)]
 impl<'r> Responder<'r> for UserError {
     async fn respond_to(self, request: &'r Request<'_>) -> response::Result<'r> {
         let message = std::io::Cursor::new(format!("{}", &self));
@@ -89,6 +99,7 @@ impl<'r> Responder<'r> for UserError {
             }
             UserError::MapConvert(_) => Status::UnprocessableEntity,
             UserError::BadType(_, _) | UserError::BadForm(_) => Status::BadRequest,
+            UserError::ModuleImport(_) => Status::BadRequest,
         };
 
         Ok(Response::build()

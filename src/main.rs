@@ -9,6 +9,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate rocket;
 
+use bollard::Docker;
 use config::Config;
 use darkredis::ConnectionPool;
 use rocket::config::{Environment, LoggingLevel};
@@ -26,7 +27,7 @@ mod test;
 struct Configuration {
     pub redis: RedisConfig,
     pub jobs: JobConfig,
-    pub login: LoginConfig
+    pub login: LoginConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -53,7 +54,7 @@ struct JobConfig {
 #[derive(serde::Deserialize)]
 struct LoginConfig {
     //Timeout in seconds for sessions
-    session_timeout: u32
+    session_timeout: u32,
 }
 
 lazy_static! {
@@ -111,6 +112,23 @@ async fn create_redis_pool() -> ConnectionPool {
         Err(e) => {
             error!("Failed to connect to Redis: {:?}", e);
             std::process::exit(1);
+        }
+    }
+}
+
+//There's not much reason to use a connection pool for the Docker client because there will never be
+//that many administrators connecting at once. There's also no pre-made solution for Bollard so it's
+//best to not bother.
+async fn connect_to_docker() -> bollard::Docker {
+    info!("Connecting to Docker...");
+    match Docker::connect_with_local_defaults() {
+        Ok(d) => {
+            info!("Succesfully connected to Docker!");
+            d
+        }
+        Err(e) => {
+            error!("Failed to connect to Docker: {:?}", e);
+            std::process::exit(1)
         }
     }
 }
