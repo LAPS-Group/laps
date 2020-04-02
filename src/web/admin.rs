@@ -10,7 +10,6 @@ use bollard::{
     Docker,
 };
 use darkredis::{ConnectionPool, Value};
-use futures::FutureExt;
 use rand::RngCore;
 use rocket::{
     http::{Cookie, Cookies, SameSite, Status},
@@ -305,7 +304,7 @@ pub async fn upload_module(
     };
     let mut stream = docker.create_image(Some(options), Some(module.into()), None);
     while let Some(update) = stream.next().await {
-        let update = update.expect("communicating with Docker daemon");
+        let update = update.map_err(|e| UserError::ModuleImport(e.to_string()))?;
         println!("Importing {}:{}: {:?}", name, version, update);
         if let CreateImageResults::CreateImageError {
             error,
@@ -688,9 +687,39 @@ mod test {
                 "form-data",
                 ("boundary", boundary),
             ))
-            .cookies(cookies);
+            .cookies(cookies.clone());
         request.set_body(form.as_slice());
         let response = request.dispatch().await;
         assert_eq!(response.status(), Status::BadRequest);
+
+        //Upload an invalid module.
+        let mut multipart = Multipart::new()
+            .add_stream::<&str, &[u8], &str>(
+                "module",
+                &[0],
+                None,
+                Some("application/x-tar+gz".parse().unwrap()),
+            )
+            .add_text("version", module_version)
+            .add_text("name", "cool-test")
+            .prepare()
+            .unwrap();
+        form.clear();
+        let boundary = multipart.boundary().to_string();
+        multipart.read_to_end(&mut form).unwrap();
+
+        let mut request = client
+            .post("/module")
+            .header(ContentType::with_params(
+                "multipart",
+                "form-data",
+                ("boundary", boundary),
+            ))
+            .cookies(cookies);
+        request.set_body(form.as_slice());
+        let mut response = request.dispatch().await;
+        assert_eq!(response.status(), Status::BadRequest);
+        let body = response.body_string().await.unwrap();
+        assert!(body.contains("tar file"));
     }
 }

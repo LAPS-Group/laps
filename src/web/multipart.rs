@@ -22,9 +22,9 @@ pub struct MultipartForm {
 
 impl MultipartForm {
     pub fn get_file(&mut self, mime: &Mime, field: &str) -> Option<Vec<u8>> {
-        if let Some(v) = self.files.remove(field) {
+        if let Some(v) = self.files.get(field) {
             if &v.mime == mime {
-                Some(v.data)
+                Some(self.files.remove(field).unwrap().data)
             } else {
                 None
             }
