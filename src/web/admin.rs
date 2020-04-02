@@ -10,6 +10,7 @@ use bollard::{
     Docker,
 };
 use darkredis::{ConnectionPool, Value};
+use futures::FutureExt;
 use rand::RngCore;
 use rocket::{
     http::{Cookie, Cookies, SameSite, Status},
@@ -205,21 +206,19 @@ pub struct PathModule {
     module: ModuleInfo,
 }
 
+fn extract_module_info_from_tag(tag: &str) -> Option<ModuleInfo> {
+    //A valid tag will always have the format "a:b"
+    tag.find(':').map(|s| ModuleInfo {
+        name: tag[..s].to_string(),
+        version: tag[s + 1..].to_string(),
+    })
+}
+
 #[get("/module/all")]
 pub async fn get_all_modules(
     docker: State<'_, Docker>,
     _session: AdminSession,
 ) -> Result<Json<Vec<PathModule>>, BackendError> {
-    fn extract_module_info_from_tag(tag: &str) -> ModuleInfo {
-        //A valid tag will always have the format "a:b"
-        tag.find(':')
-            .map(|s| ModuleInfo {
-                name: tag[..s].to_string(),
-                version: tag[s + 1..].to_string(),
-            })
-            .unwrap()
-    }
-
     //Mostly just list available docker images to create
     let images: Vec<APIImages> = docker
         .list_images(None::<ListImagesOptions<String>>)
@@ -229,7 +228,7 @@ pub async fn get_all_modules(
         .list_containers(None::<ListContainersOptions<String>>)
         .await?
         .into_iter()
-        .map(|s| extract_module_info_from_tag(&s.image))
+        .map(|s| extract_module_info_from_tag(&s.image).unwrap())
         .collect();
 
     let mut out = Vec::new();
@@ -237,7 +236,7 @@ pub async fn get_all_modules(
         //The repo_tags field will always have at least one element in it if it's `Some`.
         if let Some(tag) = image.repo_tags.map(|mut t| t.pop().unwrap()) {
             //A valid tag created by the backend will always have a version.
-            let module = extract_module_info_from_tag(&tag);
+            let module = extract_module_info_from_tag(&tag).unwrap();
 
             //Check if the container we just found is actually running
             let running = running_containers.iter().any(|s| s == &module);
@@ -257,9 +256,11 @@ pub async fn upload_module(
     let name = form
         .get_text("name")
         .ok_or_else(|| UserError::BadForm("Missing name".into()))?;
+    let name = name.trim();
     let version = form
         .get_text("version")
         .ok_or_else(|| UserError::BadForm("Missing version".into()))?;
+    let version = version.trim();
 
     //Accept both .tar and .gz for the Docker image.
     let module = form
@@ -273,13 +274,33 @@ pub async fn upload_module(
         dbg!(&name);
         return Err(UserError::BadForm("Name cannot have ':' in it".into()));
     }
+
     //Check that there's no image with the same name and version currently
+    let images: Vec<APIImages> = docker
+        .list_images(None::<ListImagesOptions<String>>)
+        .await
+        .map_err(BackendError::Docker)?;
+    let already_exists = images.into_iter().any(|i| {
+        //We are are guaranteed to have a version if repo_tags is Some.
+        if let Some(s) = i.repo_tags.map(|s| {
+            s.last()
+                .map(|l| extract_module_info_from_tag(l).unwrap())
+                .unwrap()
+        }) {
+            s.name == name && s.version == version
+        } else {
+            false
+        }
+    });
+    if already_exists {
+        return Err(UserError::ModuleImport("Module already exists".into()));
+    }
 
     //Create the image
     let options = CreateImageOptions {
-        tag: version.clone(),
-        from_src: "-".to_string(),
-        repo: name.clone(),
+        tag: version,
+        from_src: "-",
+        repo: name,
         ..Default::default()
     };
     let mut stream = docker.create_image(Some(options), Some(module.into()), None);
@@ -568,6 +589,18 @@ mod test {
 
         let cookies = create_account_and_login(&mut conn, &client).await;
 
+        //Remove the test image if it exists
+        let module_name = "laps-test";
+        let module_version = "0.1.0";
+        docker
+            .remove_image(
+                &format!("{}:{}", module_name, module_version),
+                None::<bollard::image::RemoveImageOptions>,
+                None,
+            )
+            .await
+            .unwrap();
+
         //Build the test image
         let mut file = File::open(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -599,9 +632,7 @@ mod test {
             tarball.extend_from_slice(&s.unwrap());
         }
 
-        //Upload the test image using the thing
-        let module_name = "laps-test";
-        let module_version = "0.1.0";
+        //Upload the test image using the endpoint
         let mut multipart = Multipart::new()
             .add_stream::<&str, &[u8], &str>(
                 "module",
@@ -635,7 +666,11 @@ mod test {
         // let module_version = "0.1.0";
 
         //Check that the test module is returned by /module/all.
-        let mut response = client.get("/module/all").cookies(cookies).dispatch().await;
+        let mut response = client
+            .get("/module/all")
+            .cookies(cookies.clone())
+            .dispatch()
+            .await;
         assert_eq!(response.status(), Status::Ok);
         assert_eq!(response.content_type().unwrap(), ContentType::JSON);
         let images: Vec<ModuleInfo> =
@@ -644,5 +679,18 @@ mod test {
             .into_iter()
             .find(|m| m.name == module_name && m.version == module_version)
             .unwrap();
+
+        //Try to add the module again, should fail as we already have a module with the same name and version.
+        let mut request = client
+            .post("/module")
+            .header(ContentType::with_params(
+                "multipart",
+                "form-data",
+                ("boundary", boundary),
+            ))
+            .cookies(cookies);
+        request.set_body(form.as_slice());
+        let response = request.dispatch().await;
+        assert_eq!(response.status(), Status::BadRequest);
     }
 }
