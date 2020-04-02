@@ -5,6 +5,7 @@ mod admin;
 mod algorithms;
 pub mod job;
 mod map;
+mod mime_consts;
 mod multipart;
 
 //End points for getting the frontend code

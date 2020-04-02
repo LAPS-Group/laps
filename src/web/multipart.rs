@@ -1,5 +1,3 @@
-//File to "derive" a multipart form reader.
-
 use crate::types::{BackendError, UserError};
 use mime::Mime;
 use multipart::server::Multipart;
@@ -44,7 +42,7 @@ impl FromDataSimple for MultipartForm {
     type Error = UserError;
 
     fn from_data(request: &Request, data: Data) -> FromDataFuture<'static, Self, Self::Error> {
-        trace!("Parsing MapUploadRequest");
+        trace!("Parsing multipart form");
         //Validate Content-Type header
         let content_type = if let Some(t) = request
             .headers()
@@ -62,7 +60,7 @@ impl FromDataSimple for MultipartForm {
             });
         };
         if !content_type.starts_with("multipart/form-data") {
-            trace!("Not multipart");
+            trace!("Invalid content-type");
             return Box::pin(async move {
                 Outcome::Failure((
                     Status::BadRequest,

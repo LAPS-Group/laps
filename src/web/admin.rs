@@ -21,10 +21,8 @@ use serde::{Deserialize, Serialize};
 use tokio::{fs::File, io::AsyncWriteExt, stream::StreamExt};
 
 mod adminsession;
-mod mapuploadrequest;
-
+use super::mime_consts;
 use adminsession::AdminSession;
-use mapuploadrequest::MapUploadRequest;
 
 #[get("/admin")]
 pub async fn index(_session: AdminSession) -> Option<NamedFile> {
@@ -34,13 +32,16 @@ pub async fn index(_session: AdminSession) -> Option<NamedFile> {
 #[post("/map", data = "<upload>")]
 pub async fn new_map(
     pool: State<'_, ConnectionPool>,
-    upload: MapUploadRequest,
+    mut upload: MultipartForm,
     session: AdminSession,
 ) -> Result<Json<u32>, UserError> {
     let mut conn = pool.get().await;
+    let data = upload
+        .get_file(&mime_consts::IMAGE_PNG, "data")
+        .ok_or_else(|| UserError::BadForm("Missing `data` field".into()))?;
     //If we're in test mode, do not convert. We won't be testing the conversion here, just the endpoint.
     let map_id = if cfg!(test) {
-        laps_convert::import_png_as_mapdata_test(&mut conn, upload.data)
+        laps_convert::import_png_as_mapdata_test(&mut conn, data)
             .await
             .expect("importing fake mapdata")
     } else {
@@ -50,7 +51,7 @@ pub async fn new_map(
             .into_parts();
         let mut file = File::from_std(file);
 
-        file.write_all(&upload.data)
+        file.write_all(&data)
             .await
             .expect("writing map data to temporary file");
 
@@ -261,13 +262,9 @@ pub async fn upload_module(
         .ok_or_else(|| UserError::BadForm("Missing version".into()))?;
 
     //Accept both .tar and .gz for the Docker image.
-    lazy_static::lazy_static! {
-        static ref X_TAR: mime::Mime = "application/x-tar".parse().unwrap();
-        static ref X_TAR_GZ: mime::Mime = "application/x-tar+gz".parse().unwrap();
-    };
     let module = form
-        .get_file(&*X_TAR, "module")
-        .or_else(|| form.get_file(&*X_TAR_GZ, "module"))
+        .get_file(&mime_consts::X_TAR, "module")
+        .or_else(|| form.get_file(&mime_consts::X_TAR_GZ, "module"))
         .ok_or_else(|| UserError::BadForm("Expected module with type application/x-tar".into()))?;
 
     //Validation
@@ -367,7 +364,12 @@ mod test {
         //Create a multipart form in the format which is expected by the add map endpoint.
         let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let mut multipart = Multipart::new()
-            .add_stream::<&str, &[u8], &str>("data", fake_data.as_slice(), None, None)
+            .add_stream::<&str, &[u8], &str>(
+                "data",
+                fake_data.as_slice(),
+                None,
+                Some(mime_consts::IMAGE_PNG.clone()),
+            )
             .prepare()
             .unwrap();
         let mut form = Vec::new();
