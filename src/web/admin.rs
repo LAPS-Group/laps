@@ -591,14 +591,15 @@ mod test {
         //Remove the test image if it exists
         let module_name = "laps-test";
         let module_version = "0.1.0";
-        docker
+        //The bollard Error type is unhelpful, assume that if this fails, it's because the image does
+        //not exist.
+        let _ = docker
             .remove_image(
                 &format!("{}:{}", module_name, module_version),
                 None::<bollard::image::RemoveImageOptions>,
                 None,
             )
-            .await
-            .unwrap();
+            .await;
 
         //Build the test image
         let mut file = File::open(concat!(
