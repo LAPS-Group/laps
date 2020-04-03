@@ -39,21 +39,24 @@ export default {
   },
 
   mounted: async function() {
+    //Sends a request for all available algorithms
     this.algorithms_arr = await axios.get(getRoute("/algorithms"));
     console.log(this.algorithms_arr);
 
     let i;
     for (i = 0; i < this.algorithms_arr.data.length; i++) {
+      //the recived algoritmhs are copied into two arrays.
       this.config.options[i].value = this.algorithms_arr.data[i].name;
       this.names_arr[i] = this.algorithms_arr.data[i].name;
+      console.log(this.algorithms_arr.data[i].name);
     }
-    //this.selected_algorithms = this.algorithms_arr.data;
   },
   methods: {
+    //run if algorithm is change and sets the new on, and sends it to the store.
     setNewSelectedOption(selectedOption) {
+      //updates the placeholder i the dropdown menu
       this.config.placeholder = selectedOption.value;
-
-      //console.log(this.algorithms_arr);
+      //
       let a = this.names_arr.indexOf(this.config.placeholder);
       this.selected_algorithms = this.algorithms_arr.data[a];
       mutations.setselected_algorithms(this.selected_algorithms);

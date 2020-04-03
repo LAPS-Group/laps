@@ -6,7 +6,7 @@
     <br />
     <input v-model="map_id" @change="getMap" />
     <br />
-
+    <!-- calls a function to display the map-->
     <button v-on:click="getMap">Get Map</button>
 
     <!-- creates a new template wich is only displayed if a map is recived-->
@@ -49,19 +49,15 @@ export default {
   },
 
   methods: {
+    // displays the map based on ID
     getMap: function() {
       this.map_link = getRoute(this.map_path + this.map_id);
+
+      // Is set to true so that, it doesn't try display maps without a map
       this.pictureRecived = true;
-      console.log(this.map_link);
+      // send map ID to the store
       mutations.setmap_id(this.map_id);
     }
-    //Fetch map by user ID
-    /*fetchMap: async function() {
-      //this.map = await axios.get(getRoute(this.map_path + this.map_id));
-
-      //Sets that a map is recived and the render can be rendered
-      this.pictureRecived = true;
-    }*/
   }
 };
 </script>
