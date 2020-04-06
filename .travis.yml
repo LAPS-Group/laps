@@ -10,6 +10,7 @@ jobs:
       - sudo apt-get install -y libgdal-dev
       - export GDAL_STATIC=1
     script:
+      - bash ./build-test-data.sh
       - cargo build --workspace
       - cargo test --workspace -- --test-threads 1
     services:

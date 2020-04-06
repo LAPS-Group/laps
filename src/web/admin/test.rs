@@ -1,14 +1,12 @@
 use super::*;
 use crate::{module_handling::ModuleInfo, util};
-use bollard::image::{BuildImageOptions, BuildImageResults};
-use futures::StreamExt;
+use bollard::image::RemoveImageOptions;
 use multipart::client::lazy::Multipart;
 use rocket::{
     http::{ContentType, Status},
     local::Client,
 };
 use std::io::Read;
-use tokio::{fs::File, io::AsyncReadExt};
 
 //Create an account and sign in for use in these tests
 async fn create_account_and_login(
@@ -36,6 +34,7 @@ async fn create_account_and_login(
         .body(&payload)
         .dispatch()
         .await;
+    assert_eq!(response.status(), Status::Ok);
     //Keep track of the cookies as they're used to verify that we're logged in
     response
         .cookies()
@@ -250,6 +249,46 @@ async fn list_errors() {
     check_response!(vec![fake_error, other_error]);
 }
 
+//Read the test container from disk.
+async fn get_test_container() -> Vec<u8> {
+    //Use blocking IO for this because async files are extremely slow...
+    let mut file = std::fs::File::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/test_data/test_module.tar"
+    ))
+    .unwrap();
+    let mut tarball = Vec::new();
+    file.read_to_end(&mut tarball).unwrap();
+    tarball
+}
+
+//Cleanup test containers and test images
+async fn clean_docker(docker: &Docker) {
+    let options = RemoveImageOptions {
+        force: true,
+        ..Default::default()
+    };
+    //We have to delete both the test image and the imported test image.
+    for image in &["laps-test-image:latest", "laps-test:0.1.0"] {
+        match docker.remove_image(image, Some(options), None).await {
+            Ok(_) => println!("Found and deleted old test image {}", image),
+            Err(e) => println!("Did not remove old test image: {}", e),
+        }
+    }
+
+    //Delete all containers
+    let options = bollard::container::RemoveContainerOptions {
+        force: true,
+        ..Default::default()
+    };
+    for container in &["laps-test-0.1.0"] {
+        match docker.remove_container(container, Some(options)).await {
+            Ok(_) => println!("Found and deleted old test container {}", container),
+            Err(e) => println!("Did not remove old test container: {}", e),
+        }
+    }
+}
+
 #[tokio::test]
 //Also fails if login fails
 async fn get_modules() {
@@ -267,50 +306,16 @@ async fn get_modules() {
     let cookies = create_account_and_login(&mut conn, &client).await;
 
     //Remove the test image if it exists
-    let module_name = "laps-test";
-    let module_version = "0.1.0";
-    //The bollard Error type is unhelpful, assume that if this fails, it's because the image does
-    //not exist.
-    let _ = docker
-        .remove_image(
-            &format!("{}:{}", module_name, module_version),
-            None::<bollard::image::RemoveImageOptions>,
-            None,
-        )
-        .await;
+    clean_docker(&docker).await;
 
-    //Build the test image
-    let mut file = File::open(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/test_data/test_image.tar"
-    ))
-    .await
-    .unwrap();
-    let mut tarball = Vec::new();
-    file.read_to_end(&mut tarball).await.unwrap();
-    let options = BuildImageOptions {
-        t: "laps-test-image",
-        nocache: true,
-        ..Default::default()
-    };
-    let results: Vec<BuildImageResults> = docker
-        .build_image(options, None, Some(tarball.into()))
-        .map(|r| r.unwrap())
-        .collect()
-        .await;
-    for r in results {
-        println!("{:?}", r);
-        if let BuildImageResults::BuildImageError { .. } = r {
-            panic!("Failed to build image");
-        }
-    }
-    let mut tarball = Vec::new();
-    let mut stream = docker.export_image("laps-test-image");
-    while let Some(s) = stream.next().await {
-        tarball.extend_from_slice(&s.unwrap());
-    }
+    //Ensure the test image is built
+    let tarball = get_test_container().await;
 
     //Upload the test image using the endpoint
+    let module = ModuleInfo {
+        name: "laps-test".into(),
+        version: "0.1.0".into(),
+    };
     let mut multipart = Multipart::new()
         .add_stream::<&str, &[u8], &str>(
             "module",
@@ -318,8 +323,8 @@ async fn get_modules() {
             None,
             Some("application/x-tar".parse().unwrap()),
         )
-        .add_text("version", module_version)
-        .add_text("name", module_name)
+        .add_text("version", &module.version)
+        .add_text("name", &module.name)
         .prepare()
         .unwrap();
     let mut form = Vec::new();
@@ -336,12 +341,7 @@ async fn get_modules() {
         .cookies(cookies.clone());
     request.set_body(form.as_slice());
     let response = request.dispatch().await;
-    // let body = response.body_string().await.unwrap();
-    // dbg!(&body);
-    assert_eq!(response.status(), Status::Ok);
-
-    // let module_name = "laps-test";
-    // let module_version = "0.1.0";
+    assert_eq!(response.status(), Status::Created);
 
     //Check that the test module is returned by /module/all.
     let mut response = client
@@ -353,10 +353,7 @@ async fn get_modules() {
     assert_eq!(response.content_type().unwrap(), ContentType::JSON);
     let images: Vec<ModuleInfo> =
         serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
-    images
-        .into_iter()
-        .find(|m| m.name == module_name && m.version == module_version)
-        .unwrap();
+    images.into_iter().find(|m| m == &module).unwrap();
 
     //Try to add the module again, should fail as we already have a module with the same name and version.
     let mut request = client
@@ -379,7 +376,7 @@ async fn get_modules() {
             None,
             Some("application/x-tar+gz".parse().unwrap()),
         )
-        .add_text("version", module_version)
+        .add_text("version", &module.version)
         .add_text("name", "cool-test")
         .prepare()
         .unwrap();
@@ -399,5 +396,98 @@ async fn get_modules() {
     let mut response = request.dispatch().await;
     assert_eq!(response.status(), Status::BadRequest);
     let body = response.body_string().await.unwrap();
-    assert!(body.contains("tar file"));
+    assert!(body.contains("Expected module with type"));
+}
+
+#[tokio::test]
+async fn start_stop_module() {
+    //Setup rocket instance
+    let redis = crate::create_redis_pool().await;
+    let docker = crate::connect_to_docker().await;
+    let rocket = rocket::ignite()
+        .mount(
+            "/",
+            routes![
+                get_all_modules,
+                login,
+                restart_module,
+                stop_module,
+                upload_module,
+            ],
+        )
+        .manage(redis.clone())
+        .manage(crate::connect_to_docker().await);
+    let client = Client::new(rocket).unwrap();
+    let mut conn = redis.get().await;
+    crate::test::clear_redis(&mut conn).await;
+
+    let cookies = create_account_and_login(&mut conn, &client).await;
+
+    //Remove any old images if they exist and the container
+    clean_docker(&docker).await;
+
+    //Upload the test image
+    let module = ModuleInfo {
+        name: "laps-test".into(),
+        version: "0.1.0".into(),
+    };
+    let tarball = get_test_container().await;
+    let mut multipart = Multipart::new()
+        .add_stream::<&str, &[u8], &str>(
+            "module",
+            tarball.as_slice(),
+            None,
+            Some("application/x-tar".parse().unwrap()),
+        )
+        .add_text("version", &module.version)
+        .add_text("name", &module.name)
+        .prepare()
+        .unwrap();
+    let mut form = Vec::new();
+    let boundary = multipart.boundary().to_string();
+    multipart.read_to_end(&mut form).unwrap();
+    let mut request = client
+        .post("/module")
+        .header(ContentType::with_params(
+            "multipart",
+            "form-data",
+            ("boundary", boundary.clone()),
+        ))
+        .cookies(cookies.clone());
+    request.set_body(form.as_slice());
+    let response = request.dispatch().await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Interresting part: Start the module and check that it's running
+    let response = client
+        .post(format!(
+            "/module/{}/{}/restart",
+            module.name, module.version
+        ))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
+    assert!(module_is_running(&docker, &module).await.unwrap());
+
+    //Restart the module, verify that it was restarted and not started.
+    let response = client
+        .post(format!(
+            "/module/{}/{}/restart",
+            module.name, module.version
+        ))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
+    assert!(module_is_running(&docker, &module).await.unwrap());
+
+    //Now kill it
+    let response = client
+        .post(format!("/module/{}/{}/stop", module.name, module.version))
+        .cookies(cookies)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
+    assert!(!module_is_running(&docker, &module).await.unwrap());
 }

@@ -122,7 +122,10 @@ impl FromDataSimple for MultipartForm {
                     //unwrapping is still ok
                     entry.data.read_to_end(&mut buffer).unwrap();
                     match String::from_utf8(buffer) {
-                        Ok(s) => text.insert(name, s),
+                        Ok(s) => {
+                            trace!("Got text field {}={}", name, s);
+                            text.insert(name, s)
+                        }
                         Err(e) => {
                             trace!("Received invalid UTF-8: {}", e);
                             return Outcome::Failure((
@@ -132,6 +135,7 @@ impl FromDataSimple for MultipartForm {
                         }
                     };
                 } else if let Some(content_type) = entry.headers.content_type {
+                    trace!("Got file field {}", name);
                     let mut data = Vec::new();
                     //unwrapping is still ok
                     entry.data.read_to_end(&mut data).unwrap();

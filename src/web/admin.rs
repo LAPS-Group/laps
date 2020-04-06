@@ -5,8 +5,11 @@ use crate::{
     web::multipart::MultipartForm,
 };
 use bollard::{
-    container::ListContainersOptions,
-    image::{APIImages, CreateImageOptions, CreateImageResults, ListImagesOptions},
+    container::{
+        Config, CreateContainerOptions, HostConfig, ListContainersOptions, RestartContainerOptions,
+        StartContainerOptions, StopContainerOptions,
+    },
+    image::{APIImages, BuildImageOptions, BuildImageResults, ListImagesOptions},
     Docker,
 };
 use darkredis::{ConnectionPool, Value};
@@ -18,7 +21,8 @@ use rocket::{
 };
 use rocket_contrib::json::Json;
 use serde::{Deserialize, Serialize};
-use tokio::{fs::File, io::AsyncWriteExt, stream::StreamExt};
+use std::io::Write;
+use tokio::stream::StreamExt;
 
 mod adminsession;
 use super::mime_consts;
@@ -48,18 +52,26 @@ pub async fn new_map(
             .await
             .expect("importing fake mapdata")
     } else {
-        //Generate a temporary file.
-        let (file, path) = tempfile::NamedTempFile::new()
-            .map_err(|e| UserError::Internal(BackendError::Io(e)))?
-            .into_parts();
-        let mut file = File::from_std(file);
+        //Put the map into a temporary file. Tokio::fs::File is stupidly slow and resource intensive, so
+        //using the normal std::fs::File is much better.
+        let image = tokio::task::spawn_blocking(move || {
+            match tempfile::NamedTempFile::new()
+                .map_err(|e| UserError::Internal(BackendError::Io(e)))
+            {
+                Ok(o) => {
+                    let (mut file, path) = o.into_parts();
+                    file.write_all(data.as_slice())
+                        .expect("writing map data to temporary file");
 
-        file.write_all(&data)
-            .await
-            .expect("writing map data to temporary file");
+                    laps_convert::create_normalized_png(path).map_err(UserError::MapConvert)
+                }
+                Err(e) => Err(e),
+            }
+        })
+        .await
+        .expect("spawn_blocking");
 
-        let image = laps_convert::create_normalized_png(path)?;
-        let result = laps_convert::import_png_as_mapdata(&mut conn, image.data)
+        let result = laps_convert::import_png_as_mapdata(&mut conn, image?.data)
             .await
             .expect("importing map data");
 
@@ -216,6 +228,44 @@ fn extract_module_info_from_tag(tag: &str) -> Option<ModuleInfo> {
     })
 }
 
+//Get a list of the running modules
+async fn running_modules(docker: &Docker) -> Result<Vec<ModuleInfo>, BackendError> {
+    Ok(docker
+        .list_containers(None::<ListContainersOptions<String>>)
+        .await?
+        .into_iter()
+        .map(|s| extract_module_info_from_tag(&s.image).unwrap())
+        .collect())
+}
+
+//Check if a module exists.
+async fn module_exists(docker: &Docker, module: &ModuleInfo) -> Result<bool, BackendError> {
+    //Get a list of all modules
+    let images: Vec<APIImages> = docker
+        .list_images(None::<ListImagesOptions<String>>)
+        .await
+        .map_err(BackendError::Docker)?;
+    //Figure out if module with name `name` and version `version` is in that list.
+    Ok(images.into_iter().any(|i| {
+        //We are are guaranteed to have a version if repo_tags is Some.
+        if let Some(m) = i.repo_tags.map(|s| {
+            s.last()
+                .map(|l| extract_module_info_from_tag(l).unwrap())
+                .unwrap()
+        }) {
+            module == &m
+        } else {
+            false
+        }
+    }))
+}
+
+//Check if a module is running
+async fn module_is_running(docker: &Docker, module: &ModuleInfo) -> Result<bool, BackendError> {
+    let running_modules = running_modules(&docker).await?;
+    Ok(running_modules.iter().any(|m| m == module))
+}
+
 #[get("/module/all")]
 pub async fn get_all_modules(
     docker: State<'_, Docker>,
@@ -226,12 +276,7 @@ pub async fn get_all_modules(
         .list_images(None::<ListImagesOptions<String>>)
         .await?;
 
-    let running_containers: Vec<ModuleInfo> = docker
-        .list_containers(None::<ListContainersOptions<String>>)
-        .await?
-        .into_iter()
-        .map(|s| extract_module_info_from_tag(&s.image).unwrap())
-        .collect();
+    let running_containers = running_modules(&docker).await?;
 
     let mut out = Vec::new();
     for image in images {
@@ -252,71 +297,251 @@ pub async fn get_all_modules(
 pub async fn upload_module(
     mut form: MultipartForm,
     docker: State<'_, Docker>,
-    _session: AdminSession,
-) -> Result<(), UserError> {
+    session: AdminSession,
+) -> Result<Status, UserError> {
+    //Include the module runner dependencies into the executable to make managing them easier.
+    const MODULE_DOCKERFILE: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/laps_module_runner/Dockerfile"
+    ));
+    const MODULE_LAPS_PY: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/laps_module_runner/laps.py"
+    ));
+
     //Get the required fields out of the form.
     let name = form
         .get_text("name")
-        .ok_or_else(|| UserError::BadForm("Missing name".into()))?;
-    let name = name.trim();
+        .ok_or_else(|| UserError::BadForm("Missing name".into()))?
+        .trim()
+        .to_string();
     let version = form
         .get_text("version")
-        .ok_or_else(|| UserError::BadForm("Missing version".into()))?;
-    let version = version.trim();
+        .ok_or_else(|| UserError::BadForm("Missing version".into()))?
+        .trim()
+        .to_string();
 
-    //Accept both .tar and .gz for the Docker image.
+    //Accept only .tar
     let module = form
         .get_file(&mime_consts::X_TAR, "module")
-        .or_else(|| form.get_file(&mime_consts::X_TAR_GZ, "module"))
         .ok_or_else(|| UserError::BadForm("Expected module with type application/x-tar".into()))?;
 
     //Validation
     //Check the name
     if name.chars().any(|c| c == ':') {
-        dbg!(&name);
         return Err(UserError::BadForm("Name cannot have ':' in it".into()));
     }
 
     //Check that there's no image with the same name and version currently
-    let images: Vec<APIImages> = docker
-        .list_images(None::<ListImagesOptions<String>>)
-        .await
-        .map_err(BackendError::Docker)?;
-    let already_exists = images.into_iter().any(|i| {
-        //We are are guaranteed to have a version if repo_tags is Some.
-        if let Some(s) = i.repo_tags.map(|s| {
-            s.last()
-                .map(|l| extract_module_info_from_tag(l).unwrap())
-                .unwrap()
-        }) {
-            s.name == name && s.version == version
-        } else {
-            false
-        }
-    });
-    if already_exists {
+    let info = ModuleInfo { name, version };
+    if module_exists(&docker, &info).await? {
         return Err(UserError::ModuleImport("Module already exists".into()));
     }
 
-    //Create the image
-    let options = CreateImageOptions {
-        tag: version,
-        from_src: "-",
-        repo: name,
+    //Time to create the image, pack it all into a tar:
+    let mut tarball = Vec::new();
+    {
+        //use an inner scope to drop `builder` when we're done.
+        let mut builder = tar::Builder::new(&mut tarball);
+        //Insert LAPS files. Insertion of data cannot fail because we are writing directly to memory.
+        let mut header = tar::Header::new_gnu();
+        header.set_size(MODULE_DOCKERFILE.len() as u64);
+        builder
+            .append_data(&mut header, "Dockerfile", MODULE_DOCKERFILE)
+            .unwrap();
+        header.set_size(MODULE_LAPS_PY.len() as u64);
+        builder
+            .append_data(&mut header, "laps.py", MODULE_LAPS_PY)
+            .unwrap();
+
+        //Finally append the user data to the archive
+        header.set_size(module.len() as u64);
+        builder
+            .append_data(&mut header, "contents.tar", module.as_slice())
+            .unwrap();
+
+        builder.finish().expect("writing image tarball");
+    }
+
+    //Build the image
+    let options = BuildImageOptions {
+        t: format!("{}:{}", info.name, info.version),
+        rm: true,
+        forcerm: true,
         ..Default::default()
     };
-    let mut stream = docker.create_image(Some(options), Some(module.into()), None);
+    let mut stream = docker.build_image(options, None, Some(tarball.into()));
     while let Some(update) = stream.next().await {
-        let update = update.map_err(|e| UserError::ModuleImport(e.to_string()))?;
-        println!("Importing {}:{}: {:?}", name, version, update);
-        if let CreateImageResults::CreateImageError {
+        let update = match update {
+            Ok(u) => Ok(u),
+            Err(e) => {
+                //Docker sometimes sends U+3 End of Text inside it's JSON responses.
+                //This is very dumb so we have to ignore JsonDeserializeErrors.
+                //Not sure if this is an issue with serde_json or what
+                use bollard::errors::ErrorKind;
+                match e.kind() {
+                    ErrorKind::JsonDeserializeError { .. } => {
+                        warn!(
+                            "Failed to deserialize Docker response: {:?}. Trying to keep going...",
+                            e.kind()
+                        );
+                        continue;
+                    }
+                    ErrorKind::JsonDataError { .. } => {
+                        warn!(
+                            "Failed to deserialize Docker response: {} Trying to keep going...",
+                            e.kind(),
+                        );
+                        continue;
+                    }
+                    _ => {
+                        error!("Other Docker error: {}", e);
+                        Err(e)
+                    }
+                }
+            }
+        }
+        .map_err(|e| UserError::ModuleImport(e.to_string()))?;
+        debug!("Importing {}: {:?}", info, update);
+        if let BuildImageResults::BuildImageError {
             error,
             error_detail,
         } = update
         {
-            error!("Failed to import image {:?}", error_detail);
-            return Err(UserError::ModuleImport(error));
+            return Err(UserError::ModuleImport(format!(
+                "Module import error: {}\nDetails: {:?}",
+                error, error_detail
+            )));
         }
     }
-    Ok(())
+
+    info!("{} imported module {}", session.username, info);
+    Ok(Status::Created)
+}
+
+#[post("/module/<name>/<version>/restart")]
+pub async fn restart_module(
+    session: AdminSession,
+    name: String,
+    version: String,
+    docker: State<'_, Docker>,
+) -> Result<Status, BackendError> {
+    //First, verify that the requested module actually exists:
+    let module = ModuleInfo { name, version };
+    if !module_exists(&docker, &module).await? {
+        println!("GOT HERE");
+        return Ok(Status::NotFound);
+    }
+
+    //If the module is already running, use the restart_container
+    let container_name = module.to_string().replace(":", "-");
+    if module_is_running(&docker, &module).await? {
+        //Give the module 30s to shut down
+        let options = RestartContainerOptions { t: 30 };
+        docker
+            .restart_container(&container_name, Some(options))
+            .await?;
+        info!("{} restarted module {}", session.username, &module);
+        Ok(Status::NoContent)
+    } else {
+        //If not, start it up for the first time
+        let redis = &crate::CONFIG.redis.address;
+        //For Redis to succeed in connecting the format of the address field must be <host>:<port>
+        let split = redis.find(':').unwrap();
+        let redis_host = &redis[..split];
+        let redis_port = &redis[split + 1..];
+
+        //Run it with a default set of commands
+        let mut command = vec![
+            "python3",
+            "main.py",
+            &module.name,
+            &module.version,
+            "--redis_host",
+            redis_host,
+            "--port",
+            redis_port,
+        ];
+        //Use test keys in laps.py if running in test mode
+        if cfg!(test) {
+            command.push("--test");
+        }
+
+        //Setup the settings
+        let module_name = module.to_string();
+        let host_config = HostConfig {
+            network_mode: Some("host"),
+            ..Default::default()
+        };
+        let config = Config {
+            image: Some(module_name.as_str()),
+            cmd: Some(command),
+            host_config: Some(host_config),
+            stop_signal: Some("SIGINT"),
+            ..Default::default()
+        };
+        let options = CreateContainerOptions {
+            name: &container_name,
+        };
+        //Print any warnings
+        let result = docker.create_container(Some(options), config).await?;
+        debug!(
+            "Successfully created container with name {}:{}",
+            container_name, result.id
+        );
+        let id = &result.id;
+        if let Some(w) = result.warnings {
+            w.into_iter().for_each(|w| warn!("Container {}: {}", id, w));
+        }
+
+        //Fire this sucker up~
+        docker
+            .start_container(
+                &module.to_string().replace(":", "-"),
+                None::<StartContainerOptions<String>>,
+            )
+            .await?;
+
+        info!(
+            "{} successfully started module {}",
+            session.username, module
+        );
+        Ok(Status::Created)
+    }
+}
+
+#[post("/module/<name>/<version>/stop")]
+pub async fn stop_module(
+    session: AdminSession,
+    name: String,
+    version: String,
+    docker: State<'_, Docker>,
+) -> Result<Status, BackendError> {
+    //If the module doesn't exist, 404
+    let module = ModuleInfo { name, version };
+    if !module_exists(&docker, &module).await? {
+        warn!("Couln't find module {}", module);
+        Ok(Status::NotFound)
+    } else {
+        //If the module isn't running, don't bother stopping it
+        if !module_is_running(&docker, &module).await? {
+            Ok(Status::NotModified)
+        } else {
+            let options = StopContainerOptions { t: 60 };
+            let container = module.to_string().replace(":", "-");
+            match docker.stop_container(&container, Some(options)).await {
+                Ok(_) => {
+                    info!("Module {} stopped by {}", container, session.username);
+                    Ok(Status::NoContent)
+                }
+                Err(e) => {
+                    error!(
+                        "Failed attempt to stop {} by {}: {:?}",
+                        container, session.username, e
+                    );
+                    Err(BackendError::Docker(e))
+                }
+            }
+        }
+    }
 }

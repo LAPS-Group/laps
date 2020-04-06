@@ -3,6 +3,7 @@ use crate::{
     util::{create_redis_backend_key, get_job_key},
 };
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 //Handle any modules unregistrering themselves in a loop, forever.
 async fn unregister_loop(pool: darkredis::ConnectionPool) {
@@ -48,6 +49,11 @@ pub struct ModuleInfo {
     pub version: String,
 }
 
+impl fmt::Display for ModuleInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.name, self.version)
+    }
+}
 //The listener which listens for pathfinding results
 async fn result_listener(pool: darkredis::ConnectionPool) {
     let mut conn = pool.spawn("result-listener").await.unwrap();
