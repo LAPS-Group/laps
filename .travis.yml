@@ -18,7 +18,7 @@ jobs:
       - docker
   - stage: test
     language: node_js
-    node_js: 13.8
+    node_js: 12.16
     install:
     - npm install
     script:
@@ -30,7 +30,7 @@ jobs:
     dist: bionic
     rust: nightly
     before_install:
-      - nvm install 13.8
+      - nvm install 12.16
       - openssl aes-256-cbc -K $encrypted_be519dac41c7_key -iv $encrypted_be519dac41c7_iv
         -in travis_id_rsa.enc -out ./travis_id_rsa -d
       - chmod 600 travis_id_rsa
@@ -54,7 +54,7 @@ jobs:
     os: linux
     dist: bionic
     before_install:
-      - nvm install 13.8
+      - nvm install 12.16
       - openssl aes-256-cbc -K $encrypted_be519dac41c7_key -iv $encrypted_be519dac41c7_iv
         -in travis_id_rsa.enc -out ./travis_id_rsa -d
       - chmod 600 travis_id_rsa
