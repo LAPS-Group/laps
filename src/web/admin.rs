@@ -12,6 +12,7 @@ use bollard::{
     image::{APIImages, BuildImageOptions, BuildImageResults, ListImagesOptions},
     Docker,
 };
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use darkredis::{ConnectionPool, Value};
 use rand::RngCore;
 use rocket::{
@@ -36,6 +37,35 @@ pub async fn index(_session: AdminSession) -> Option<NamedFile> {
     NamedFile::open("dist/admin.html").ok()
 }
 
+fn has_valid_tiff_header(input: &[u8]) -> bool {
+    //Instead of verifying everything in the TIFF file to be valid, just check if the TIFF header is there.
+    //If the image is actually invalid this will be detected by GDAL further down the pipeline.
+    //Header length is 8 bytes
+    if input.len() < 8 {
+        false
+    } else {
+        let buffer = &input[..8];
+        //Intel(little endian) or Motorola(big endian) file?
+        let little_endian = match &buffer[..2] {
+            //Intel byte order
+            b"II" => true,
+            //Motorola
+            b"MM" => false,
+            //If neither the file is invalid
+            _ => return false,
+        };
+
+        let version = if little_endian {
+            (&buffer[2..]).read_u16::<LittleEndian>()
+        } else {
+            (&buffer[2..]).read_u16::<BigEndian>()
+        };
+
+        //Version check
+        version.map(|v| v == 42).unwrap_or(false)
+    }
+}
+
 #[post("/map", data = "<upload>")]
 pub async fn new_map(
     pool: State<'_, ConnectionPool>,
@@ -44,8 +74,14 @@ pub async fn new_map(
 ) -> Result<Json<u32>, UserError> {
     let mut conn = pool.get().await;
     let data = upload
-        .get_file(&mime_consts::IMAGE_PNG, "data")
+        .get_file(&mime_consts::IMAGE_TIFF, "data")
         .ok_or_else(|| UserError::BadForm("Missing `data` field".into()))?;
+
+    //Do a quick and dirty check that the file has the TIF image header
+    if !has_valid_tiff_header(&data) {
+        return Err(UserError::ModuleImport("Invalid Tiff header".into()));
+    }
+
     //If we're in test mode, do not convert. We won't be testing the conversion here, just the endpoint.
     let map_id = if cfg!(test) {
         laps_convert::import_png_as_mapdata_test(&mut conn, data)
@@ -205,7 +241,7 @@ pub async fn login(
         cookies.add_private(cookie);
 
         //Done logging in!
-        Ok(Status::Ok)
+        Ok(Status::NoContent)
     } else {
         warn!("Failed authentication attempt for user {}", login.username);
         Ok(Status::Forbidden)
@@ -375,9 +411,6 @@ pub async fn upload_module(
         let update = match update {
             Ok(u) => Ok(u),
             Err(e) => {
-                //Docker sometimes sends U+3 End of Text inside it's JSON responses.
-                //This is very dumb so we have to ignore JsonDeserializeErrors.
-                //Not sure if this is an issue with serde_json or what
                 use bollard::errors::ErrorKind;
                 match e.kind() {
                     ErrorKind::JsonDeserializeError { .. } => {
@@ -429,7 +462,6 @@ pub async fn restart_module(
     //First, verify that the requested module actually exists:
     let module = ModuleInfo { name, version };
     if !module_exists(&docker, &module).await? {
-        println!("GOT HERE");
         return Ok(Status::NotFound);
     }
 

@@ -34,7 +34,7 @@ async fn create_account_and_login(
         .body(&payload)
         .dispatch()
         .await;
-    assert_eq!(response.status(), Status::Ok);
+    assert_eq!(response.status(), Status::NoContent);
     //Keep track of the cookies as they're used to verify that we're logged in
     response
         .cookies()
@@ -58,22 +58,53 @@ async fn map_manipulation() {
     //Keep track of the cookies as they're used to verify that we're logged in
     let response_cookies = create_account_and_login(&mut conn, &client).await;
 
-    //Create a multipart form in the format which is expected by the add map endpoint.
+    //Send invalid map data
     let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     let mut multipart = Multipart::new()
         .add_stream::<&str, &[u8], &str>(
             "data",
             fake_data.as_slice(),
             None,
-            Some(mime_consts::IMAGE_PNG.clone()),
+            Some(mime_consts::IMAGE_TIFF.clone()),
         )
         .prepare()
         .unwrap();
     let mut form = Vec::new();
     let boundary = multipart.boundary().to_string();
     multipart.read_to_end(&mut form).unwrap();
+    let mut request = client
+        .post("/map")
+        .header(ContentType::with_params(
+            "multipart",
+            "form-data",
+            ("boundary", boundary.clone()),
+        ))
+        .cookies(response_cookies.clone());
+    request.set_body(form.as_slice());
+    let mut response = request.dispatch().await;
+    assert_eq!(response.status(), Status::BadRequest);
+    assert!(response
+        .body_string()
+        .await
+        .unwrap()
+        .contains("Invalid Tiff header"));
 
-    //Insert some map data
+    //Send a valid TIFF this time.
+    let mut multipart = Multipart::new()
+        .add_stream::<&str, &[u8], &str>(
+            "data",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/test_data/height_data/dtm1.tif"
+            )),
+            None,
+            Some(mime_consts::IMAGE_TIFF.clone()),
+        )
+        .prepare()
+        .unwrap();
+    let mut form = Vec::new();
+    let boundary = multipart.boundary().to_string();
+    multipart.read_to_end(&mut form).unwrap();
     let mut request = client
         .post("/map")
         .header(ContentType::with_params(
@@ -173,7 +204,7 @@ async fn login() {
         .header(ContentType::Form)
         .dispatch()
         .await;
-    assert_eq!(response.status(), Status::Ok);
+    assert_eq!(response.status(), Status::NoContent);
     assert_eq!(response.cookies().len(), 1);
 
     //Login again, but this time using all uppercase letters
@@ -184,7 +215,7 @@ async fn login() {
         .header(ContentType::Form)
         .dispatch()
         .await;
-    assert_eq!(response.status(), Status::Ok);
+    assert_eq!(response.status(), Status::NoContent);
     assert_eq!(response.cookies().len(), 1);
 }
 

@@ -1,22 +1,18 @@
 //Test utility functions and such
 
 use crate::util;
-use png::Decoder;
-use tokio::{fs::File, io::AsyncReadExt};
+use laps_convert::create_normalized_png;
 
 //Insert some test mapdata to use in the tests. Will always place it at map ID 1. Returns the width and height of the image.
 pub async fn insert_test_mapdata(conn: &mut darkredis::Connection) -> (u32, u32) {
-    let mut file = File::open("test_data/height_data/dom1.png").await.unwrap();
-    let mut contents = Vec::new();
-    file.read_to_end(&mut contents).await.unwrap();
+    let path = "test_data/height_data/dtm1.tif";
+    let png = create_normalized_png(path).unwrap();
 
-    conn.hset(util::create_redis_key("mapdata"), b"1", &contents)
+    conn.hset(util::create_redis_key("mapdata"), b"1", &png.data)
         .await
         .unwrap();
-    let decoder = Decoder::new(contents.as_slice());
-    let (info, _) = decoder.read_info().unwrap();
 
-    (info.width, info.height)
+    (png.width as u32, png.height as u32)
 }
 
 //A nice function for resetting only the test part of the database.
