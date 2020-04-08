@@ -1,4 +1,3 @@
-#![feature(exclusive_range_pattern)]
 #![warn(missing_debug_implementations)]
 #![warn(missing_docs)]
 
@@ -9,6 +8,8 @@ extern crate log;
 
 use gdal::raster::Dataset;
 use quick_error::quick_error;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 
 quick_error! {
     #[derive(Debug)]
@@ -48,8 +49,57 @@ fn convert_range(input: f64, max: f64, min: f64, new_min: f64, new_max: f64) -> 
     ((input - min) * new_range / old_range) + new_min
 }
 
-///Return a vector of normalized pixels
-pub fn create_normalized_png<P>(path: P) -> Result<ConvertedImage, ConvertError>
+#[derive(Debug, Deserialize, Serialize)]
+///Map metadata. The unit can vary, depending on the input map.
+pub struct ImageMetadata {
+    ///The width of a pixel
+    pub x_res: f64,
+    ///The height of a pixel
+    pub y_res: f64,
+    ///The height of the lowest points on the map.
+    pub min_height: f64,
+    ///The height of the highest points on the map.
+    pub max_height: f64,
+    ///The average height for all points.
+    pub average_height: f64,
+}
+
+impl ImageMetadata {
+    pub(crate) fn from_data(
+        dataset: &Dataset,
+        min_height: f64,
+        max_height: f64,
+        average_height: f64,
+    ) -> Result<Self, ConvertError> {
+        let [x, x_res, _, y, _, y_res] = dataset.geo_transform().map_err(ConvertError::GDal)?;
+        debug!("X: {}, Y: {}, x_res: {}, y_res: {}", x, y, x_res, y_res);
+        debug!(
+            "Min height {}, max: {}, avg: {}",
+            min_height, max_height, average_height
+        );
+
+        Ok(ImageMetadata {
+            x_res,
+            y_res,
+            min_height,
+            max_height,
+            average_height,
+        })
+    }
+}
+
+impl fmt::Display for ImageMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}m by {}m resolution, lowest point: {}, highest point: {}, avg: {}",
+            self.x_res, self.y_res, self.min_height, self.max_height, self.average_height
+        )
+    }
+}
+
+///Convert a GDAL raster format file from `path` into a PNG. The image must have geospecial metadata in it.
+pub fn convert_to_png<P>(path: P) -> Result<(ConvertedImage, ImageMetadata), ConvertError>
 where
     P: AsRef<std::path::Path>,
 {
@@ -57,8 +107,10 @@ where
     match dataset.count() {
         0 => Err(ConvertError::NoBands),
         1 => Ok(()),
-        2..std::isize::MAX => Err(ConvertError::MoreThanOneBand),
-        _ => unreachable!(),
+        //The count will never be less than zero, any value gotten here will be greater than zero.
+        //We could match on the negative values too but that requires a nightly feature
+        //TODO use exaustive_range_patterns feature when it arrives for correctness
+        _ => Err(ConvertError::MoreThanOneBand),
     }?;
 
     //Our data mostly consists of float32s hopefully, but in case we have other ones
@@ -70,7 +122,7 @@ where
         .map_err(ConvertError::GDal)?
         .data;
     debug!(
-        "Decoded raster data of size {}pxX{}px with {} points",
+        "Decoded raster data of size {}px by {}px with {} points",
         width,
         height,
         data.len()
@@ -91,11 +143,6 @@ where
         average_acc += point;
     }
     let average = average_acc / data.len() as f64;
-
-    debug!(
-        "Min height: {:.2}MASL, max height: {:.2}MASL, average: {:.2}MASL",
-        min, max, average
-    );
 
     //pre-allocate buffer for grayscale data for output image.
     let mut out_data = vec![0u8; data.len()];
@@ -118,32 +165,40 @@ where
         writer.write_image_data(&out_data).unwrap();
     }
 
+    //Finally, get metadata
     let out = ConvertedImage {
         width,
         height,
         data: data_out,
     };
+    let metadata = ImageMetadata::from_data(&dataset, min, max, average)?;
 
-    Ok(out)
+    Ok((out, metadata))
 }
 
 ///Import `data` into the system as mapdata.
-pub async fn import_png_as_mapdata(
+///# Panics
+///Will panic if it tries to set a map id which already exists, probably from inputting it manually.
+pub async fn import_data(
     conn: &mut darkredis::Connection,
-    data: Vec<u8>,
+    image: ConvertedImage,
+    metadata: ImageMetadata,
 ) -> Result<u32, darkredis::Error> {
-    do_import(conn, data, "laps.mapdata").await
+    do_import("laps.mapdata", conn, image, metadata).await
 }
 
-//Do the actual import
+#[inline]
 async fn do_import(
-    conn: &mut darkredis::Connection,
-    data: Vec<u8>,
     map_key: &str,
+    conn: &mut darkredis::Connection,
+    image: ConvertedImage,
+    metadata: ImageMetadata,
 ) -> Result<u32, darkredis::Error> {
+    let image_key = format!("{}.image", map_key);
+    let meta_key = format!("{}.meta", map_key);
     //Get the biggest unused map id.
     let mut map_ids: Vec<u32> = conn
-        .hkeys(&map_key)
+        .hkeys(&image_key)
         .await?
         .into_iter()
         .map(|s| {
@@ -154,22 +209,36 @@ async fn do_import(
         .collect();
     map_ids.sort_unstable();
 
+    //Place map data into the system
     let map_id = map_ids.last().unwrap_or(&0) + 1;
-    if !conn.hsetnx(&map_key, &map_id.to_string(), data).await? {
+    let map_id_string = map_id.to_string();
+    if !conn.hsetnx(image_key, &map_id_string, image.data).await? {
         //Map data was already set!
+        panic!("Tried to set map field {}, but it already existed!", map_id);
+    }
+
+    //Set the metadata
+    let serialized = serde_json::to_vec(&metadata).unwrap();
+    if !conn.hsetnx(meta_key, &map_id_string, &serialized).await? {
         panic!(
-            "Tried to set map data field {}, but it already existed!",
+            "Tried to set map metadata field {}, but it already existed!",
             map_id
         );
     }
 
+    info!(
+        "Imported map {}: {}px by {}px image with metadata: {}",
+        map_id_string, image.width, image.height, metadata
+    );
+
     Ok(map_id)
 }
 
-///Import `data` into the system as mapdata, but place the result in the testing key rahter than the actual key.
-pub async fn import_png_as_mapdata_test(
+///Import `image` and `metadata` into the system, but place the result in the testing key rather than the actual key.
+pub async fn import_data_test(
     conn: &mut darkredis::Connection,
-    data: Vec<u8>,
+    image: ConvertedImage,
+    metadata: ImageMetadata,
 ) -> Result<u32, darkredis::Error> {
-    do_import(conn, data, "laps.testing.mapdata").await
+    do_import("laps.testing.mapdata", conn, image, metadata).await
 }

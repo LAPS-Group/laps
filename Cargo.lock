@@ -25,6 +25,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "approx"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0e60b75072ecd4168020818c0107f2857bb6c4e64252d8d3983f6263b40a5c3"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "arc-swap"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -873,6 +882,7 @@ dependencies = [
 name = "laps"
 version = "0.1.0"
 dependencies = [
+ "approx",
  "base64 0.12.0",
  "bollard",
  "byteorder",
@@ -911,6 +921,8 @@ dependencies = [
  "log 0.4.8",
  "png",
  "quick-error",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

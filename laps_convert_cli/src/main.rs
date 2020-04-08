@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate log;
 
-use laps_convert::{ConvertError, ConvertedImage};
+use laps_convert::{ConvertError, ConvertedImage, ImageMetadata};
 use std::path::PathBuf;
 use structopt::StructOpt;
 use tokio::io::AsyncWriteExt;
@@ -34,10 +34,10 @@ struct Options {
     files: Vec<PathBuf>,
 }
 
-fn convert_files(files: &[PathBuf]) -> Vec<Result<ConvertedImage, ConvertError>> {
+fn convert_files(files: &[PathBuf]) -> Vec<Result<(ConvertedImage, ImageMetadata), ConvertError>> {
     let mut out = Vec::new();
     for f in files {
-        out.push(laps_convert::create_normalized_png(f))
+        out.push(laps_convert::convert_to_png(f))
     }
     out
 }
@@ -66,21 +66,17 @@ async fn main() -> Result<(), String> {
 
         //Perform the conversion and store the result
         let converted = convert_files(&options.files);
-        for (index, image) in converted.into_iter().enumerate() {
-            laps_convert::import_png_as_mapdata(
-                &mut conn,
-                image
-                    .map_err(|e| {
-                        format!(
-                            "Failed to convert {}: {}",
-                            options.files[index].as_os_str().to_string_lossy(),
-                            e
-                        )
-                    })?
-                    .data,
-            )
-            .await
-            .unwrap();
+        for (index, result) in converted.into_iter().enumerate() {
+            let (image, metadata) = result.map_err(|e| {
+                format!(
+                    "Failed to convert {}: {}",
+                    options.files[index].as_os_str().to_string_lossy(),
+                    e
+                )
+            })?;
+            laps_convert::import_data(&mut conn, image, metadata)
+                .await
+                .unwrap();
         }
     } else {
         if options.output_dir.is_file() {
@@ -105,7 +101,7 @@ async fn main() -> Result<(), String> {
         //Do the conversion and write the files to disk
         let converted = convert_files(&options.files);
         for (index, image) in converted.into_iter().enumerate() {
-            let image = image.map_err(|e| {
+            let (image, _) = image.map_err(|e| {
                 format!(
                     "Failed to convert file {}: {}",
                     options.files[index].as_os_str().to_string_lossy(),
