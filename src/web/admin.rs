@@ -82,41 +82,41 @@ pub async fn new_map(
         return Err(UserError::ModuleImport("Invalid Tiff header".into()));
     }
 
-    //If we're in test mode, do not convert. We won't be testing the conversion here, just the endpoint.
-    let map_id = if cfg!(test) {
-        laps_convert::import_png_as_mapdata_test(&mut conn, data)
-            .await
-            .expect("importing fake mapdata")
-    } else {
-        //Put the map into a temporary file. Tokio::fs::File is stupidly slow and resource intensive, so
-        //using the normal std::fs::File is much better.
-        let image = tokio::task::spawn_blocking(move || {
-            match tempfile::NamedTempFile::new()
-                .map_err(|e| UserError::Internal(BackendError::Io(e)))
-            {
-                Ok(o) => {
-                    let (mut file, path) = o.into_parts();
-                    file.write_all(data.as_slice())
-                        .expect("writing map data to temporary file");
+    //Put the map into a temporary file. This is needed because GDAL does not allow us to give it a buffer, it has
+    //to be put into some sort of file.
+    //Tokio::fs::File is stupidly slow and resource intensive, so using the normal std::fs::File is much better.
+    let data = tokio::task::spawn_blocking(move || {
+        match tempfile::NamedTempFile::new().map_err(|e| UserError::Internal(BackendError::Io(e))) {
+            Ok(o) => {
+                let (mut file, path) = o.into_parts();
+                file.write_all(data.as_slice())
+                    .expect("writing map data to temporary file");
 
-                    laps_convert::create_normalized_png(path).map_err(UserError::MapConvert)
-                }
-                Err(e) => Err(e),
+                laps_convert::convert_to_png(path).map_err(UserError::MapConvert)
             }
-        })
-        .await
-        .expect("spawn_blocking");
+            Err(e) => Err(e),
+        }
+    })
+    .await
+    .expect("spawn_blocking");
 
-        let result = laps_convert::import_png_as_mapdata(&mut conn, image?.data)
+    //Actually import the data
+    let (image, metadata) = data?;
+    //Use the test version in test mode.
+    let map_id = if cfg!(test) {
+        laps_convert::import_data_test(&mut conn, image, metadata)
             .await
-            .expect("importing map data");
-
-        info!(
-            "Admin {} uploaded a new map with ID {}",
-            session.username, result
-        );
-        result
+            .expect("importing map data")
+    } else {
+        laps_convert::import_data(&mut conn, image, metadata)
+            .await
+            .expect("importing map data")
     };
+
+    info!(
+        "Admin {} uploaded a new map with ID {}",
+        session.username, map_id
+    );
     Ok(Json(map_id))
 }
 
@@ -128,9 +128,12 @@ pub async fn delete_map(
 ) -> Result<Status, BackendError> {
     //We're already authenticated, just get rid of the map in question.
     let mut conn = pool.get().await;
-    let mapdata_key = util::create_redis_key("mapdata");
+    let image_key = util::create_redis_key("mapdata.image");
+    let meta_key = util::create_redis_key("mapdata.meta");
     let id = id.to_string();
-    if conn.hdel(mapdata_key, &id).await? {
+    if conn.hdel(image_key, &id).await? {
+        //Don't really care what the result of this is
+        let _ = conn.hdel(meta_key, &id).await?;
         info!("Map {} deleted by {}", id, session.username);
         Ok(Status::NoContent)
     } else {

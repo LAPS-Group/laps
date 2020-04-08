@@ -48,7 +48,7 @@ impl JobSubmission {
             return Ok((false, "Module does not exist"));
         }
 
-        let mapdata_key = util::create_redis_key("mapdata");
+        let mapdata_key = util::create_redis_key("mapdata.image");
         //Check that the requested map actually exists.
         if let Some(data) = redis.hget(mapdata_key, self.map_id.to_string()).await? {
             //Verify that the job is within the bounds of the map

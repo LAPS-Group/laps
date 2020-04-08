@@ -42,6 +42,7 @@ features = ["json", "serve"]
 default-features = false
 
 [dev-dependencies]
+approx = "0.3.2"
 gdal = { version = "0.6.0", features = ["gdal_2_2", "bindgen"] }
 
 [dev-dependencies.multipart]

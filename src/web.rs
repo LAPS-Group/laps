@@ -48,6 +48,7 @@ pub async fn run() {
                 job::result,
                 job::submit,
                 map::get_map,
+                map::get_map_metadata,
                 map::get_maps,
             ],
         )
