@@ -38,6 +38,8 @@ pub async fn run() {
                 admin::index,
                 admin::login,
                 admin::new_map,
+                admin::register_admin,
+                admin::register_super_admin,
                 admin::restart_module,
                 admin::show_errors,
                 admin::stop_module,
