@@ -1,9 +1,13 @@
 use super::*;
-use crate::{module_handling::ModuleInfo, util};
-use bollard::image::RemoveImageOptions;
+use crate::{
+    module_handling::{ModuleError, ModuleInfo},
+    util,
+};
+use bollard::{image::RemoveImageOptions, Docker};
+use modules::module_is_running;
 use multipart::client::lazy::Multipart;
 use rocket::{
-    http::{ContentType, Status},
+    http::{ContentType, Cookie, Status},
     local::Client,
 };
 use std::io::Read;
@@ -14,7 +18,6 @@ async fn create_test_account(username: &str, password: &str, conn: &mut darkredi
     let config = argon2::Config::default();
     let salt = util::generate_salt();
     let hash = argon2::hash_encoded(password.as_bytes(), &salt, &config).unwrap();
-    println!("HASHED: {}", hash);
     let builder = darkredis::MSetBuilder::new()
         .set(b"hash", &hash)
         .set(b"super", b"1");
