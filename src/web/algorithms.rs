@@ -16,9 +16,11 @@ mod test {
     use super::*;
     use crate::util::create_redis_backend_key;
     use rocket::{http::Status, local::Client};
+    use serial_test::serial;
 
     //Test the listing of algorithms
     #[tokio::test]
+    #[serial]
     async fn list() {
         //Setup rocket instance
         let redis = crate::create_redis_pool().await;

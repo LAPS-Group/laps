@@ -10,6 +10,7 @@ use rocket::{
     http::{ContentType, Cookie, Status},
     local::Client,
 };
+use serial_test::serial;
 use std::io::Read;
 
 //Create a test account using the initial setup handler. Will only work with that.
@@ -50,6 +51,7 @@ async fn create_test_account_and_login(client: &Client) -> Vec<Cookie<'static>> 
 }
 
 #[tokio::test]
+#[serial]
 //Will always fail if the login test below fails.
 async fn map_manipulation() {
     //Setup rocket instance
@@ -161,6 +163,7 @@ async fn map_manipulation() {
 }
 
 #[tokio::test]
+#[serial]
 async fn registration() {
     let redis = crate::create_redis_pool().await;
     let rocket = rocket::ignite()
@@ -231,6 +234,7 @@ async fn registration() {
 }
 
 #[tokio::test]
+#[serial]
 async fn login() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
@@ -292,6 +296,7 @@ async fn login() {
 }
 
 #[tokio::test]
+#[serial]
 //Fails if login test fails
 async fn list_errors() {
     //Setup rocket instance
@@ -393,6 +398,7 @@ async fn clean_docker(docker: &Docker) {
 }
 
 #[tokio::test]
+#[serial]
 //Also fails if login fails
 async fn get_modules() {
     //Setup rocket instance
@@ -506,6 +512,7 @@ async fn get_modules() {
 }
 
 #[tokio::test]
+#[serial]
 async fn start_stop_module() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
