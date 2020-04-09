@@ -16,11 +16,12 @@ async fn create_account_and_login(
     //Register a test super admin
     let username = "test-admin";
     let admin_key = util::get_admin_key("test-admin");
+    let salt = util::generate_salt();
     let password = "password";
-    //Use the smallest possible cost factor to make the tests run faster.
-    let hash = bcrypt::hash(password, 4).unwrap().to_string();
+    let hash = util::calculate_password_hash(&password, &salt);
     let builder = darkredis::MSetBuilder::new()
         .set(b"hash", &hash)
+        .set(b"salt", &salt)
         .set(b"super", b"1");
     conn.hset_many(&admin_key, builder).await.unwrap();
 
@@ -164,12 +165,12 @@ async fn login() {
     //Register a test super admin
     let username = "test-admin";
     let admin_key = util::get_admin_key("test-admin");
+    let salt = util::generate_salt();
     let password = "password";
-    let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)
-        .unwrap()
-        .to_string();
+    let hash = util::calculate_password_hash(&password, &salt);
     let builder = darkredis::MSetBuilder::new()
         .set(b"hash", &hash)
+        .set(b"salt", &salt)
         .set(b"super", b"1");
     conn.hset_many(&admin_key, builder).await.unwrap();
 
