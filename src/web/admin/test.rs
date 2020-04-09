@@ -8,22 +8,27 @@ use rocket::{
 };
 use std::io::Read;
 
+//Create a test account.
+async fn create_test_account(username: &str, password: &str, conn: &mut darkredis::Connection) {
+    let admin_key = util::get_admin_key(username);
+    let config = argon2::Config::default();
+    let salt = util::generate_salt();
+    let hash = argon2::hash_encoded(password.as_bytes(), &salt, &config).unwrap();
+    println!("HASHED: {}", hash);
+    let builder = darkredis::MSetBuilder::new()
+        .set(b"hash", &hash)
+        .set(b"super", b"1");
+    conn.hset_many(&admin_key, builder).await.unwrap();
+}
 //Create an account and sign in for use in these tests
-async fn create_account_and_login(
+async fn create_test_account_and_login(
     conn: &mut darkredis::Connection,
     client: &Client,
 ) -> Vec<Cookie<'static>> {
     //Register a test super admin
     let username = "test-admin";
-    let admin_key = util::get_admin_key("test-admin");
-    let salt = util::generate_salt();
     let password = "password";
-    let hash = util::calculate_password_hash(&password, &salt);
-    let builder = darkredis::MSetBuilder::new()
-        .set(b"hash", &hash)
-        .set(b"salt", &salt)
-        .set(b"super", b"1");
-    conn.hset_many(&admin_key, builder).await.unwrap();
+    create_test_account(username, password, conn).await;
 
     //Sign in
     //Create form
@@ -56,7 +61,7 @@ async fn map_manipulation() {
     crate::test::clear_redis(&mut conn).await;
 
     //Keep track of the cookies as they're used to verify that we're logged in
-    let response_cookies = create_account_and_login(&mut conn, &client).await;
+    let response_cookies = create_test_account_and_login(&mut conn, &client).await;
 
     //Send invalid map data
     let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -164,15 +169,8 @@ async fn login() {
 
     //Register a test super admin
     let username = "test-admin";
-    let admin_key = util::get_admin_key("test-admin");
-    let salt = util::generate_salt();
     let password = "password";
-    let hash = util::calculate_password_hash(&password, &salt);
-    let builder = darkredis::MSetBuilder::new()
-        .set(b"hash", &hash)
-        .set(b"salt", &salt)
-        .set(b"super", b"1");
-    conn.hset_many(&admin_key, builder).await.unwrap();
+    create_test_account(username, password, &mut conn).await;
 
     //Try to login with a fake account
     let form = format!("username={}&password={}", "does-not-exist", "password");
@@ -231,7 +229,7 @@ async fn list_errors() {
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
-    let cookies = create_account_and_login(&mut conn, &client).await;
+    let cookies = create_test_account_and_login(&mut conn, &client).await;
 
     //Quick macro to check the response
     macro_rules! check_response {
@@ -334,7 +332,7 @@ async fn get_modules() {
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
-    let cookies = create_account_and_login(&mut conn, &client).await;
+    let cookies = create_test_account_and_login(&mut conn, &client).await;
 
     //Remove the test image if it exists
     clean_docker(&docker).await;
@@ -452,7 +450,7 @@ async fn start_stop_module() {
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
-    let cookies = create_account_and_login(&mut conn, &client).await;
+    let cookies = create_test_account_and_login(&mut conn, &client).await;
 
     //Remove any old images if they exist and the container
     clean_docker(&docker).await;

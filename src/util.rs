@@ -1,5 +1,4 @@
 use crate::{module_handling::ModuleInfo, types::JobResult, web::job::JobSubmission};
-use blake2::{Blake2b, Digest};
 use rand::{thread_rng, RngCore};
 
 ///Create a general Redis key to be used in the system.
@@ -49,19 +48,13 @@ pub fn get_admin_key(username: &str) -> String {
     format!("{}.admins.{}", prefix, username.to_lowercase())
 }
 
-//Calculate a password hash from a password and salt.
-pub fn calculate_password_hash(password: &str, salt: &[u8]) -> Vec<u8> {
-    let mut hasher = Blake2b::new();
-    hasher.input(password);
-    hasher.input(salt);
-    hasher.result().to_vec()
-}
-
 //Generate a cryptographically secure salt for password hashing
 pub fn generate_salt() -> Vec<u8> {
     //according to the rand documentation, ThreadRng is supposed to be cryptographically secure.
+    //All we want to do when salting the hash is to give equal passwords different hashes, so generating
+    //8 bytes is plenty.
     let mut rng = thread_rng();
-    let mut out = vec![0u8; 256];
+    let mut out = vec![0u8; 8];
     rng.fill_bytes(&mut out);
     out
 }

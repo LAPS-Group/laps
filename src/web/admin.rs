@@ -180,7 +180,6 @@ pub async fn login(
     let command = darkredis::Command::new("HMGET")
         .arg(&key)
         .arg(b"hash")
-        .arg(b"salt")
         .arg(b"super");
 
     //Get the results
@@ -198,53 +197,64 @@ pub async fn login(
 
     //Extract other values, assuming that the data is valid and that all fields are present
     let hash = hash.unwrap_string();
-    let salt = iter.next().unwrap().unwrap_string();
+    let hash = String::from_utf8_lossy(&hash);
     let is_super = String::from_utf8_lossy(&iter.next().unwrap().unwrap_string())
         .parse::<isize>()
         .unwrap()
         != 0;
 
     //Verify that the password matches
-    if hash == util::calculate_password_hash(&login.password, &salt) {
-        //yay!
-        info!("Successfully authenticated admin {}", login.username);
+    println!("FROM DB: {}", hash);
+    match argon2::verify_encoded(&hash, login.password.as_bytes()) {
+        Ok(true) => {
+            //yay!
+            info!("Successfully authenticated admin {}", login.username);
 
-        //Generate session identifier, rand::thread_rng() is again considered cryptographically secure.
-        //ThreadRng does not implement send so make it short-lived
-        let token = {
-            let mut rng = rand::thread_rng();
-            let mut buffer = vec![0u8; 256];
-            rng.fill_bytes(&mut buffer);
-            base64::encode(buffer)
-        };
+            //Generate session identifier, rand::thread_rng() is again considered cryptographically secure.
+            //ThreadRng does not implement send so make it short-lived
+            let token = {
+                let mut rng = rand::thread_rng();
+                let mut buffer = vec![0u8; 256];
+                rng.fill_bytes(&mut buffer);
+                base64::encode(buffer)
+            };
 
-        //Create the session object
-        let session = AdminSession {
-            username: login.username.to_lowercase(),
-            is_super,
-        };
+            //Create the session object
+            let session = AdminSession {
+                username: login.username.to_lowercase(),
+                is_super,
+            };
 
-        //Register the session in the database
-        let session_key = util::get_session_key(&token);
-        conn.set_and_expire_seconds(
-            &session_key,
-            serde_json::to_vec(&session).unwrap(),
-            crate::CONFIG.login.session_timeout,
-        )
-        .await?;
+            //Register the session in the database
+            let session_key = util::get_session_key(&token);
+            conn.set_and_expire_seconds(
+                &session_key,
+                serde_json::to_vec(&session).unwrap(),
+                crate::CONFIG.login.session_timeout,
+            )
+            .await?;
 
-        //Create and set session cookie
-        let cookie = Cookie::build("session-token", token)
-            .http_only(true)
-            .same_site(SameSite::Strict)
-            .finish();
-        cookies.add_private(cookie);
+            //Create and set session cookie
+            let cookie = Cookie::build("session-token", token)
+                .http_only(true)
+                .same_site(SameSite::Strict)
+                .finish();
+            cookies.add_private(cookie);
 
-        //Done logging in!
-        Ok(Status::NoContent)
-    } else {
-        warn!("Failed authentication attempt for user {}", login.username);
-        Ok(Status::Forbidden)
+            //Done logging in!
+            Ok(Status::NoContent)
+        }
+        Ok(false) => {
+            warn!("Failed authentication attempt for user {}", login.username);
+            Ok(Status::Forbidden)
+        }
+        Err(e) => {
+            error!(
+                "Failed to check password hash from {}: {}",
+                login.username, e
+            );
+            Ok(Status::InternalServerError)
+        }
     }
 }
 
