@@ -208,11 +208,35 @@ async fn registration() {
     let response = client
         .post("/register")
         .body(&new_account_form)
-        .cookies(cookies)
+        .cookies(cookies.clone())
         .header(ContentType::Form)
         .dispatch()
         .await;
     assert_eq!(response.status(), Status::Conflict);
+
+    //Try to create an administrator whose password is too short:
+    let too_short = format!("username=another-admin&password=1");
+    let mut response = client
+        .post("/register")
+        .body(too_short)
+        .header(ContentType::Form)
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    assert!(response.body_string().await.unwrap().contains("too short"));
+
+    //Try to create an administrator whose password is too long:
+    let too_long = format!("username=another-admin&password=1234567890");
+    let mut response = client
+        .post("/register")
+        .body(too_long)
+        .header(ContentType::Form)
+        .cookies(cookies)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    assert!(response.body_string().await.unwrap().contains("too long"));
 
     //Log in with the second admin we created earlier and try to add an administrator.
     let response = client

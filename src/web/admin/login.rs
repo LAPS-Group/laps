@@ -6,7 +6,9 @@ use rand::RngCore;
 use rocket::{
     http::{Cookie, Cookies, SameSite, Status},
     request::{Form, State},
+    Response,
 };
+use std::io::Cursor;
 
 #[derive(FromForm)]
 pub struct AdminLogin {
@@ -118,22 +120,39 @@ async fn has_any_admins(conn: &mut Connection) -> Result<bool, BackendError> {
     Ok(!admins.is_empty())
 }
 
-//Unconditionally insert an admin into the database.
+//Insert an admin into the database, checking that the password is within the required limits.
 async fn insert_admin(
     conn: &mut Connection,
     username: &str,
     password: &str,
     is_super: bool,
-) -> Result<(), BackendError> {
-    let admin_key = util::get_admin_key(username);
-    let config = argon2::Config::default();
-    let salt = util::generate_salt();
-    let hash = argon2::hash_encoded(password.as_bytes(), &salt, &config).unwrap();
-    let builder = MSetBuilder::new()
-        .set(b"hash", &hash)
-        .set(b"super", if is_super { b"1" } else { b"0" });
-    conn.hset_many(&admin_key, builder).await?;
-    Ok(())
+) -> Result<Response<'static>, BackendError> {
+    //Check that the password is not too long nor too short
+    let response = if password.len() < crate::CONFIG.login.minimum_password_length as usize {
+        Response::build()
+            .status(Status::BadRequest)
+            .sized_body(Cursor::new("Password is too short!"))
+            .await
+            .finalize()
+    } else if password.len() > crate::CONFIG.login.maximum_password_length as usize {
+        Response::build()
+            .status(Status::BadRequest)
+            .sized_body(Cursor::new("Password is too long!"))
+            .await
+            .finalize()
+    } else {
+        let admin_key = util::get_admin_key(username);
+        let config = argon2::Config::default();
+        let salt = util::generate_salt();
+        let hash = argon2::hash_encoded(password.as_bytes(), &salt, &config).unwrap();
+        let builder = MSetBuilder::new()
+            .set(b"hash", &hash)
+            .set(b"super", if is_super { b"1" } else { b"0" });
+        conn.hset_many(&admin_key, builder).await?;
+        info!("Registered new admin {}", username);
+        Response::build().status(Status::Created).finalize()
+    };
+    Ok(response)
 }
 
 //The route to register an administrator the first time the service starts up.
@@ -142,17 +161,16 @@ async fn insert_admin(
 pub async fn register_super_admin(
     pool: State<'_, ConnectionPool>,
     login: Form<AdminLogin>,
-) -> Result<Status, BackendError> {
+) -> Result<Response<'_>, BackendError> {
     let mut conn = pool.get().await;
     if has_any_admins(&mut conn).await? {
         //This endpoint may only be used by a non-admin during first time setup.
         warn!("Attempt to register a super admin, but we already have one!");
-        Ok(Status::Forbidden)
+        let response = Response::build().status(Status::Forbidden).finalize();
+        Ok(response)
     } else {
-        //Otherwise, insert the first administrator as a super admin.
-        insert_admin(&mut conn, &login.username, &login.password, true).await?;
-        info!("Created initial super admin {}", login.username);
-        Ok(Status::Created)
+        let response = insert_admin(&mut conn, &login.username, &login.password, true).await?;
+        Ok(response)
     }
 }
 
@@ -161,25 +179,29 @@ pub async fn register_admin(
     pool: State<'_, ConnectionPool>,
     session: AdminSession,
     login: Form<AdminLogin>,
-) -> Result<Status, BackendError> {
+) -> Result<Response<'_>, BackendError> {
     //This endpoint requires the admin to be a super admin.
     if session.is_super {
         let key = util::get_admin_key(&login.username);
         let mut conn = pool.get().await;
         //If the admin already exists, do not overwrite the existing account
-        if conn.exists(&key).await? {
+        let response = if conn.exists(&key).await? {
             warn!(
                 "Attempt to register admin {} which already exists!",
                 session.username
             );
-            Ok(Status::Conflict)
+            Response::build()
+                .status(Status::Conflict)
+                .sized_body(Cursor::new("Admin already exists with that name."))
+                .await
+                .finalize()
         } else {
             //All is good, create a new admin, but do not make him a super admin.
-            insert_admin(&mut conn, &login.username, &login.password, false).await?;
             info!("Registed new admin {}", login.username);
-            Ok(Status::Created)
-        }
+            insert_admin(&mut conn, &login.username, &login.password, false).await?
+        };
+        Ok(response)
     } else {
-        Ok(Status::Forbidden)
+        Ok(Response::build().status(Status::Forbidden).finalize())
     }
 }
