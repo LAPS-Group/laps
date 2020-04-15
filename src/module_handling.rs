@@ -1,7 +1,8 @@
 use crate::{
     types::{BackendError, JobResult},
-    util::{create_redis_backend_key, get_job_key},
+    util::{create_redis_backend_key, create_redis_key, get_job_key, get_module_log_key},
 };
+use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -89,37 +90,55 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-pub struct ModuleError {
+struct ModuleLog {
     pub module: ModuleInfo,
     pub message: String,
-    pub instant: u64,
+    pub level: String,
+    pub instant: i64,
 }
-//Listen and report module errors.
-pub async fn error_listener(pool: darkredis::ConnectionPool) {
-    let mut conn = pool.spawn("error-listener").await.unwrap();
 
-    let listen_key = create_redis_backend_key("errors"); // the key to listen for module errors
-    let dest_key = create_redis_backend_key("recent-errors"); // the key to place recent errors on
-    let timeout = String::from("0");
+//Listen and report module logs.
+pub async fn log_listener(pool: darkredis::ConnectionPool) {
+    let mut conn = pool.spawn("log-listener").await.unwrap();
+
+    let listen_key = create_redis_key("moduleLogs"); // the key to listen for module logs
 
     loop {
-        //TODO use blpoprpush when Darkredis gets support for it
-        let command = darkredis::Command::new("BRPOPLPUSH")
-            .arg(&listen_key)
-            .arg(&dest_key)
-            .arg(&timeout);
-        let message = conn
-            .run_command(command)
+        //Ok to use expect and unwrap as something would probably have gone very wrong.
+        let (_, value) = conn
+            .blpop(&[&listen_key], 0)
             .await
-            .expect("listening for module errors")
-            .unwrap_string();
-        let error: ModuleError =
-            serde_json::from_slice(&message).expect("deserializing module error");
+            .expect("listening for module logs")
+            .unwrap();
+        let entry: ModuleLog = serde_json::from_slice(&value).expect("deserializing module log");
 
-        error!(
-            "Received error from module {} {}: \"{}\"",
-            error.module.name, error.module.version, error.message
+        //We have deserialized the log entry, now store it.
+        let log_key = get_module_log_key(&entry.module);
+        let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(entry.instant, 0), Utc);
+        //Store the log entry as a simple string.
+        let stored_entry = format!(
+            "[{} {}] {}",
+            time.to_rfc3339_opts(SecondsFormat::Secs, true),
+            entry.level,
+            entry.message
         );
+        conn.rpush(log_key, stored_entry)
+            .await
+            .expect("pushing module logs");
+
+        let log_message = format!("Module {}: {}", entry.module, entry.message);
+
+        //Print out the message into the server logs
+        match entry.level.as_str() {
+            "info" => info!("{}", log_message),
+            "error" => error!("{}", log_message),
+            "warn" => warn!("{}", log_message),
+            "debug" => debug!("{}", log_message),
+            _ => {
+                warn!("Unknown module log level {}", entry.level);
+                info!("{}", log_message)
+            }
+        }
     }
 }
 
@@ -131,8 +150,8 @@ pub async fn run(pool: darkredis::ConnectionPool) {
     tokio::spawn(unregister_loop(pool.clone()));
     //Run the results listener
     tokio::spawn(result_listener(pool.clone()));
-    //run the error listener
-    tokio::spawn(error_listener(pool.clone()));
+    //run the log listener
+    tokio::spawn(log_listener(pool.clone()));
 
     loop {
         let (_, data) = &conn

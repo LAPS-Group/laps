@@ -16,7 +16,6 @@ pub async fn insert_test_mapdata(conn: &mut darkredis::Connection) -> (u32, u32)
 }
 
 //A nice function for resetting only the test part of the database.
-#[cfg(test)]
 pub async fn clear_redis(conn: &mut darkredis::Connection) {
     use futures::StreamExt;
 

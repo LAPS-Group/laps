@@ -30,6 +30,11 @@ pub fn get_module_key(module: &ModuleInfo) -> String {
     format!("{}.{}:{}.work", prefix, module.name, module.version)
 }
 
+pub fn get_module_log_key(module: &ModuleInfo) -> String {
+    let prefix = create_redis_backend_key("moduleLogs");
+    format!("{}.{}:{}", prefix, module.name, module.version)
+}
+
 //Get the job token to job id map token key using `token`.
 pub fn get_job_mapping_key(token: &str) -> String {
     let prefix = create_redis_backend_key("job_mapping");

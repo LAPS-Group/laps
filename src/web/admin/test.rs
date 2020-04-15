@@ -1,14 +1,11 @@
 use super::*;
-use crate::{
-    module_handling::{ModuleError, ModuleInfo},
-    util,
-};
+use crate::{module_handling::ModuleInfo, util};
 use bollard::{image::RemoveImageOptions, Docker};
 use modules::module_is_running;
 use multipart::client::lazy::Multipart;
 use rocket::{
     http::{ContentType, Cookie, Status},
-    local::Client,
+    local::{Client, LocalResponse},
 };
 use serial_test::serial;
 use std::io::Read;
@@ -322,63 +319,75 @@ async fn login() {
 #[tokio::test]
 #[serial]
 //Fails if login test fails
-async fn list_errors() {
+async fn module_logs() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
     let rocket = rocket::ignite()
-        .mount("/", routes![login, show_errors, register_super_admin])
-        .manage(redis.clone());
+        .mount(
+            "/",
+            routes![
+                upload_module,
+                login,
+                get_module_logs,
+                register_super_admin,
+                restart_module
+            ],
+        )
+        .manage(redis.clone())
+        .manage(crate::connect_to_docker().await);
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
+    clean_docker(&crate::connect_to_docker().await).await;
+    tokio::spawn(crate::module_handling::run(redis.clone()));
 
     let cookies = create_test_account_and_login(&client).await;
 
-    //Quick macro to check the response
-    macro_rules! check_response {
-        ($input:expr) => {
-            let mut response = client
-                .get("/modules/errors")
-                .cookies(cookies.clone())
-                .dispatch()
-                .await;
-            assert_eq!(response.status(), Status::Ok);
-            assert_eq!(response.content_type(), Some(ContentType::JSON));
-            let result: Vec<ModuleError> =
-                serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
-            assert_eq!(result, $input);
-        };
-    }
+    //Check that this module does not exist.
+    let name = "laps-test";
+    let version = "0.1.0";
+    let response = client
+        .get(format!("/module/{}/{}/logs", name, version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NotFound);
 
-    //Verify that no errors are present
-    check_response!(vec![]);
+    //Upload a test module
+    let tarball = get_test_container().await;
+    let response = upload_test_image(&client, &cookies, &tarball, name, version).await;
+    assert_eq!(response.status(), Status::Created);
 
-    //add an error
-    let module = ModuleInfo {
-        name: "fake-module".into(),
-        version: "0".into(),
-    };
-    let fake_error = ModuleError {
-        instant: 100,
-        module,
-        message: "hello".into(),
-    };
-    let error_key = util::create_redis_backend_key("recent-errors");
-    conn.rpush(&error_key, serde_json::to_vec(&fake_error).unwrap())
-        .await
-        .unwrap();
+    //Get the module logs again, this time it should exist but be empty:
+    let response = client
+        .get(format!("/module/{}/{}/logs", name, version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
 
-    //Verify that there's one
-    check_response!(vec![fake_error.clone()]);
+    //Start up the test module
+    let response = client
+        .post(format!("/module/{}/{}/restart", name, version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
 
-    //Add another one to check that the order is correct
-    let mut other_error = fake_error.clone();
-    other_error.message = "goodbye".to_string();
-    conn.rpush(&error_key, serde_json::to_vec(&other_error).unwrap())
-        .await
-        .unwrap();
+    //Sleep for a bit to let the module start up, 500ms should be more than plenty.
+    //This line does mean this test is kind of flaky but by picking a large enough
+    //number it should be okay.
+    tokio::time::delay_for(std::time::Duration::from_millis(500)).await;
 
-    check_response!(vec![fake_error, other_error]);
+    //Try to get the module logs, this time it should have the startup message.
+    let mut response = client
+        .get(format!("/module/{}/{}/logs", name, version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let body = response.body_string().await.unwrap();
+    assert!(body.contains("Registered as"));
 }
 
 //Read the test container from disk.
@@ -421,6 +430,41 @@ async fn clean_docker(docker: &Docker) {
     }
 }
 
+//Upload a testing image from `tarball` with name `name` and version `version`.
+async fn upload_test_image<'a>(
+    client: &'a Client,
+    cookies: &'a Vec<Cookie<'a>>,
+    tarball: &'a [u8],
+    name: &'a str,
+    version: &'a str,
+) -> LocalResponse<'a> {
+    let mut multipart = Multipart::new()
+        .add_stream::<&str, &[u8], &str>(
+            "module",
+            tarball,
+            None,
+            Some("application/x-tar".parse().unwrap()),
+        )
+        .add_text("version", version)
+        .add_text("name", name)
+        .prepare()
+        .unwrap();
+    let mut form = Vec::new();
+    let boundary = multipart.boundary().to_string();
+    multipart.read_to_end(&mut form).unwrap();
+
+    let mut request = client
+        .post("/module")
+        .header(ContentType::with_params(
+            "multipart",
+            "form-data",
+            ("boundary", boundary.clone()),
+        ))
+        .cookies(cookies.clone());
+    request.set_body(form.as_slice());
+    request.dispatch().await
+}
+
 #[tokio::test]
 #[serial]
 //Also fails if login fails
@@ -452,31 +496,8 @@ async fn get_modules() {
         name: "laps-test".into(),
         version: "0.1.0".into(),
     };
-    let mut multipart = Multipart::new()
-        .add_stream::<&str, &[u8], &str>(
-            "module",
-            tarball.as_slice(),
-            None,
-            Some("application/x-tar".parse().unwrap()),
-        )
-        .add_text("version", &module.version)
-        .add_text("name", &module.name)
-        .prepare()
-        .unwrap();
-    let mut form = Vec::new();
-    let boundary = multipart.boundary().to_string();
-    multipart.read_to_end(&mut form).unwrap();
-
-    let mut request = client
-        .post("/module")
-        .header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary.clone()),
-        ))
-        .cookies(cookies.clone());
-    request.set_body(form.as_slice());
-    let response = request.dispatch().await;
+    let response =
+        upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
     assert_eq!(response.status(), Status::Created);
 
     //Check that the test module is returned by /module/all.
@@ -492,47 +513,20 @@ async fn get_modules() {
     images.into_iter().find(|m| m == &module).unwrap();
 
     //Try to add the module again, should fail as we already have a module with the same name and version.
-    let mut request = client
-        .post("/module")
-        .header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary),
-        ))
-        .cookies(cookies.clone());
-    request.set_body(form.as_slice());
-    let response = request.dispatch().await;
+    let response =
+        upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
     assert_eq!(response.status(), Status::BadRequest);
 
     //Upload an invalid module.
-    let mut multipart = Multipart::new()
-        .add_stream::<&str, &[u8], &str>(
-            "module",
-            &[0],
-            None,
-            Some("application/x-tar+gz".parse().unwrap()),
-        )
-        .add_text("version", &module.version)
-        .add_text("name", "cool-test")
-        .prepare()
-        .unwrap();
-    form.clear();
-    let boundary = multipart.boundary().to_string();
-    multipart.read_to_end(&mut form).unwrap();
-
-    let mut request = client
-        .post("/module")
-        .header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary),
-        ))
-        .cookies(cookies);
-    request.set_body(form.as_slice());
-    let mut response = request.dispatch().await;
+    let response = upload_test_image(
+        &client,
+        &cookies,
+        &[0u8],
+        "some-unique-name",
+        &module.version,
+    )
+    .await;
     assert_eq!(response.status(), Status::BadRequest);
-    let body = response.body_string().await.unwrap();
-    assert!(body.contains("Expected module with type"));
 }
 
 #[tokio::test]
@@ -570,30 +564,8 @@ async fn start_stop_module() {
         version: "0.1.0".into(),
     };
     let tarball = get_test_container().await;
-    let mut multipart = Multipart::new()
-        .add_stream::<&str, &[u8], &str>(
-            "module",
-            tarball.as_slice(),
-            None,
-            Some("application/x-tar".parse().unwrap()),
-        )
-        .add_text("version", &module.version)
-        .add_text("name", &module.name)
-        .prepare()
-        .unwrap();
-    let mut form = Vec::new();
-    let boundary = multipart.boundary().to_string();
-    multipart.read_to_end(&mut form).unwrap();
-    let mut request = client
-        .post("/module")
-        .header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary.clone()),
-        ))
-        .cookies(cookies.clone());
-    request.set_body(form.as_slice());
-    let response = request.dispatch().await;
+    let response =
+        upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
     assert_eq!(response.status(), Status::Created);
 
     //Interresting part: Start the module and check that it's running
@@ -623,7 +595,7 @@ async fn start_stop_module() {
     //Now kill it
     let response = client
         .post(format!("/module/{}/{}/stop", module.name, module.version))
-        .cookies(cookies)
+        .cookies(cookies.clone())
         .dispatch()
         .await;
     assert_eq!(response.status(), Status::NoContent);

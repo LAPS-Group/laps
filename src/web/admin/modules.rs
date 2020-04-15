@@ -1,7 +1,7 @@
 use super::mime_consts;
 use super::AdminSession;
 use crate::{
-    module_handling::{ModuleError, ModuleInfo},
+    module_handling::ModuleInfo,
     types::{BackendError, UserError},
     util,
     web::multipart::MultipartForm,
@@ -15,28 +15,55 @@ use bollard::{
     Docker,
 };
 use darkredis::ConnectionPool;
-use rocket::{http::Status, request::State};
+use rocket::{
+    http::{ContentType, Status},
+    request::State,
+    Response,
+};
 use rocket_contrib::json::Json;
 use serde::{Deserialize, Serialize};
+use std::io::Cursor;
 use tokio::stream::StreamExt;
 
-#[get("/modules/errors")]
-pub async fn show_errors(
-    pool: State<'_, ConnectionPool>,
+#[get("/module/<name>/<version>/logs")]
+pub async fn get_module_logs<'a>(
+    pool: State<'a, ConnectionPool>,
+    docker: State<'a, Docker>,
+    name: String,
+    version: String,
     _session: AdminSession,
-) -> Result<Json<Vec<ModuleError>>, BackendError> {
-    //Grab all recent errors.
-    let mut conn = pool.get().await;
-    let key = util::create_redis_backend_key("recent-errors");
-    let len = conn.llen(&key).await?.unwrap();
-    let output: Vec<ModuleError> = conn
-        .lrange(key, 0, len)
-        .await?
-        .into_iter()
-        .map(|e| serde_json::from_slice(&e).unwrap())
-        .collect();
+) -> Result<Response<'a>, BackendError> {
+    //Find out if the module exists
+    let module = ModuleInfo { name, version };
+    if module_exists(&docker, &module).await? {
+        let mut conn = pool.get().await;
+        let log_key = util::get_module_log_key(&module);
+        //Get all the elements of the log and concatenate them.
+        let out =
+            conn.lrange(log_key, 0, -1)
+                .await?
+                .into_iter()
+                .fold(Vec::new(), |mut out, mut x| {
+                    out.append(&mut x);
+                    out.push('\n' as u8);
+                    out
+                });
 
-    Ok(Json(output))
+        //If empty return 204 no content
+        if out.is_empty() {
+            Ok(Response::build().status(Status::NoContent).finalize())
+        } else {
+            let cursor = Cursor::new(out);
+            Ok(Response::build()
+                .status(Status::Ok)
+                .header(ContentType::Plain)
+                .sized_body(cursor)
+                .await
+                .finalize())
+        }
+    } else {
+        Ok(Response::build().status(Status::NotFound).finalize())
+    }
 }
 
 //Return value for the module structs, with an additional field to determine if a module is currently running.

@@ -30,8 +30,6 @@ class RunnerException(Exception):
 
 class Runner:
     def __init__(self):
-        # Take name and version from the command-line if specified. This allows us to override the
-        # name and version when launching the module as a container in the backend.
         self.name = args.name
         self.version = args.version
         # Redis-py does connection pooling by default
@@ -39,9 +37,16 @@ class Runner:
 
         # Register module
         self.test_mode = args.test
+        # set the correct log key in test mode
+        if self.test_mode:
+            self.log_key = "laps.testing.moduleLogs"
+        else:
+            self.log_key = "laps.moduleLogs"
+
         self.register_module()
 
         self.job_key = self.create_redis_key("work")
+
 
     def __enter__(self):
         return self
@@ -72,7 +77,7 @@ class Runner:
             self.create_backend_redis_key("register-module"),
             ident
         )
-        print("Registered as", self.name, self.version, flush=True)
+        self.log_info("Registered as {0}:{1}".format(self.name, self.version))
 
     # Main module loop
     def run(self, handler):
@@ -80,7 +85,7 @@ class Runner:
         blocking = True
         # Setup a signal handler to kill the loop before the next iteration when SIGINT is sent
         def signal_handler(sig, frame):
-            print("Shutdown signal received, shutting down", flush=True)
+            self.log_info("Shutdown signal received, shutting down")
 
             if blocking:
                 sys.exit(0)
@@ -100,13 +105,12 @@ class Runner:
             (_, response) = response
             value = json.loads(response)
             job_id = value["job_id"]
-            print("Got job", job_id, flush=True)
+            self.log_info("Got job {0}".format(job_id))
             try:
                 (should_run, response) = handler(self, value)
             except Exception as exp:
                 message = "Handler failed: type: {0} contents: {1}".format(type(exp), exp)
-                print(message, flush=True)
-                self.send_error(message)
+                self.log_error(message)
                 break
             if not should_run:
                 g_running = False
@@ -117,7 +121,7 @@ class Runner:
                 self.create_backend_redis_key("path-results"),
                 json.dumps(response)
             )
-            print("Completed job", job_id, flush=True)
+            self.log_info("Completed job {}".format(job_id))
             blocking = True
 
     def create_redis_key(self, name):
@@ -132,20 +136,40 @@ class Runner:
         else:
             return "laps.backend.{}".format(name)
 
-    # Return a runtime error in the module
-    def send_error(self, message, metadata=None):
-        error = {
+        
+
+    def __log(self, level, message):
+        def loglevel_to_escape(level):
+            if level == "debug":
+                return "\033[37m"
+            elif level == "warn":
+                return "\033[33m"
+            elif level == "error":
+                return "\033[31m"
+            elif level == "info":
+                return "\033[32m"
+            else:
+                return "\033[36m"
+        print("[{0}Z] {1}{2}\033[0m: {3}".format(datetime.utcnow(), loglevel_to_escape(level),
+                                                 level, message), flush=True)
+        msg = {
             "message": message,
+            "level": level,
             "module": {
                 "name": self.name,
                 "version": self.version
             },
-            "instant": datetime.utcnow()
+            "instant": int(time.time())
         }
-        if not metadata is None:
-            error["metadata"] = metadata
 
-        self.redis.rpush(
-            self.create_backend_redis_key("errors"),
-            json.dumps(error)
-        )
+        self.redis.rpush(self.log_key, json.dumps(msg))
+
+    # Return a runtime error in the module
+    def log_error(self, message):
+        self.__log("error", message)
+    def log_info(self, message):
+        self.__log("info", message)
+    def log_debug(self, message):
+        self.__log("debug", message)
+    def log_warn(self, message):
+        self.__log("warn", message)
