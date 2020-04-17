@@ -2,6 +2,7 @@ jobs:
   include:
   - stage: test
     language: rust
+    cache: cargo
     os: linux
     rust: nightly
     before_install:
@@ -9,13 +10,17 @@ jobs:
       - sudo apt-get update
       - sudo apt-get install -y libgdal-dev
       - export GDAL_STATIC=1
+    before_script: cargo install cargo-tarpaulin
     script:
       - bash ./build-test-data.sh
       - cargo build --workspace
-      - cargo test --workspace -- --test-threads 1
+      - cargo test --workspace
     services:
       - redis
       - docker
+    after_success: |
+      cargo tarpaulin --out Xml
+      bash <(curl -s https://codecov.io/bash)
   - stage: test
     language: node_js
     node_js: 12.16

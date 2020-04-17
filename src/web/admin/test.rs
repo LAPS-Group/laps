@@ -10,28 +10,27 @@ use rocket::{
     http::{ContentType, Cookie, Status},
     local::Client,
 };
+use serial_test::serial;
 use std::io::Read;
 
-//Create a test account.
-async fn create_test_account(username: &str, password: &str, conn: &mut darkredis::Connection) {
-    let admin_key = util::get_admin_key(username);
-    let config = argon2::Config::default();
-    let salt = util::generate_salt();
-    let hash = argon2::hash_encoded(password.as_bytes(), &salt, &config).unwrap();
-    let builder = darkredis::MSetBuilder::new()
-        .set(b"hash", &hash)
-        .set(b"super", b"1");
-    conn.hset_many(&admin_key, builder).await.unwrap();
+//Create a test account using the initial setup handler. Will only work with that.
+async fn create_test_account(username: &str, password: &str, client: &Client) {
+    let form = format!("username={}&password={}", username, password);
+    let response = client
+        .post("/register")
+        .header(ContentType::Form)
+        .body(&form)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
 }
+
 //Create an account and sign in for use in these tests
-async fn create_test_account_and_login(
-    conn: &mut darkredis::Connection,
-    client: &Client,
-) -> Vec<Cookie<'static>> {
+async fn create_test_account_and_login(client: &Client) -> Vec<Cookie<'static>> {
     //Register a test super admin
     let username = "test-admin";
     let password = "password";
-    create_test_account(username, password, conn).await;
+    create_test_account(username, password, client).await;
 
     //Sign in
     //Create form
@@ -52,19 +51,23 @@ async fn create_test_account_and_login(
 }
 
 #[tokio::test]
+#[serial]
 //Will always fail if the login test below fails.
 async fn map_manipulation() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
     let rocket = rocket::ignite()
-        .mount("/", routes![new_map, login, delete_map])
+        .mount(
+            "/",
+            routes![new_map, login, delete_map, register_super_admin],
+        )
         .manage(redis.clone());
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
     //Keep track of the cookies as they're used to verify that we're logged in
-    let response_cookies = create_test_account_and_login(&mut conn, &client).await;
+    let response_cookies = create_test_account_and_login(&client).await;
 
     //Send invalid map data
     let fake_data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -160,11 +163,107 @@ async fn map_manipulation() {
 }
 
 #[tokio::test]
+#[serial]
+async fn registration() {
+    let redis = crate::create_redis_pool().await;
+    let rocket = rocket::ignite()
+        .mount("/", routes![login, register_super_admin, register_admin])
+        .manage(redis.clone());
+    let client = Client::untracked(rocket).unwrap();
+    let mut conn = redis.get().await;
+    crate::test::clear_redis(&mut conn).await;
+
+    //Test that registering accounts work. First up, that the new instance setup part is working:
+    let cookies = create_test_account_and_login(&client).await;
+    //Verify that the created admin is a super admin
+    let key = util::get_admin_key("test-admin");
+    assert_eq!(conn.hget(&key, "super").await.unwrap(), Some(b"1".to_vec()));
+
+    //Try to register a new account without being signed in, which should fail:
+    let username = "second-admin";
+    let password = "password";
+    let new_account_form = format!("username={}&password={}", username, password);
+    let response = client
+        .post("/register")
+        .body(&new_account_form)
+        .header(ContentType::Form)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Forbidden);
+
+    //Now try to register an admin with a session, this should succeed:
+    let response = client
+        .post("/register")
+        .body(&new_account_form)
+        .cookies(cookies.clone())
+        .header(ContentType::Form)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
+    //Verify that the created admin is NOT a super admin
+    let key = util::get_admin_key(username);
+    assert_eq!(conn.hget(&key, "super").await.unwrap(), Some(b"0".to_vec()));
+
+    //Create another, which should fail:
+    let response = client
+        .post("/register")
+        .body(&new_account_form)
+        .cookies(cookies.clone())
+        .header(ContentType::Form)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Conflict);
+
+    //Try to create an administrator whose password is too short:
+    let too_short = format!("username=another-admin&password=1");
+    let mut response = client
+        .post("/register")
+        .body(too_short)
+        .header(ContentType::Form)
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    assert!(response.body_string().await.unwrap().contains("too short"));
+
+    //Try to create an administrator whose password is too long:
+    let too_long = format!("username=another-admin&password=1234567890");
+    let mut response = client
+        .post("/register")
+        .body(too_long)
+        .header(ContentType::Form)
+        .cookies(cookies)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    assert!(response.body_string().await.unwrap().contains("too long"));
+
+    //Log in with the second admin we created earlier and try to add an administrator.
+    let response = client
+        .post("/login")
+        .body(new_account_form)
+        .header(ContentType::Form)
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
+    let cookies = response.cookies();
+    let response = client
+        .post("/register")
+        .cookies(cookies)
+        .header(ContentType::Form)
+        .body(format!("username=thid-admin&password=password"))
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Forbidden);
+}
+
+#[tokio::test]
+#[serial]
 async fn login() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
     let rocket = rocket::ignite()
-        .mount("/", routes![login])
+        .mount("/", routes![login, register_super_admin])
         .manage(redis.clone());
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
@@ -173,7 +272,7 @@ async fn login() {
     //Register a test super admin
     let username = "test-admin";
     let password = "password";
-    create_test_account(username, password, &mut conn).await;
+    create_test_account(username, password, &client).await;
 
     //Try to login with a fake account
     let form = format!("username={}&password={}", "does-not-exist", "password");
@@ -221,18 +320,19 @@ async fn login() {
 }
 
 #[tokio::test]
+#[serial]
 //Fails if login test fails
 async fn list_errors() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
     let rocket = rocket::ignite()
-        .mount("/", routes![login, show_errors])
+        .mount("/", routes![login, show_errors, register_super_admin])
         .manage(redis.clone());
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
-    let cookies = create_test_account_and_login(&mut conn, &client).await;
+    let cookies = create_test_account_and_login(&client).await;
 
     //Quick macro to check the response
     macro_rules! check_response {
@@ -322,20 +422,24 @@ async fn clean_docker(docker: &Docker) {
 }
 
 #[tokio::test]
+#[serial]
 //Also fails if login fails
 async fn get_modules() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
     let docker = crate::connect_to_docker().await;
     let rocket = rocket::ignite()
-        .mount("/", routes![login, get_all_modules, upload_module])
+        .mount(
+            "/",
+            routes![login, get_all_modules, upload_module, register_super_admin],
+        )
         .manage(redis.clone())
         .manage(crate::connect_to_docker().await);
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
-    let cookies = create_test_account_and_login(&mut conn, &client).await;
+    let cookies = create_test_account_and_login(&client).await;
 
     //Remove the test image if it exists
     clean_docker(&docker).await;
@@ -432,6 +536,7 @@ async fn get_modules() {
 }
 
 #[tokio::test]
+#[serial]
 async fn start_stop_module() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
@@ -445,6 +550,7 @@ async fn start_stop_module() {
                 restart_module,
                 stop_module,
                 upload_module,
+                register_super_admin,
             ],
         )
         .manage(redis.clone())
@@ -453,7 +559,7 @@ async fn start_stop_module() {
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
 
-    let cookies = create_test_account_and_login(&mut conn, &client).await;
+    let cookies = create_test_account_and_login(&client).await;
 
     //Remove any old images if they exist and the container
     clean_docker(&docker).await;
