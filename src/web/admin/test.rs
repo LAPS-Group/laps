@@ -8,7 +8,7 @@ use modules::module_is_running;
 use multipart::client::lazy::Multipart;
 use rocket::{
     http::{ContentType, Cookie, Status},
-    local::Client,
+    local::{Client, LocalResponse},
 };
 use serial_test::serial;
 use std::io::Read;
@@ -263,11 +263,16 @@ async fn login() {
     //Setup rocket instance
     let redis = crate::create_redis_pool().await;
     let rocket = rocket::ignite()
-        .mount("/", routes![login, register_super_admin])
+        .mount("/", routes![login, register_super_admin, get_me])
         .manage(redis.clone());
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
+
+    //A function to test the /admin/me endpoint
+    async fn get_me<'a>(client: &'a Client, cookies: Vec<Cookie<'a>>) -> LocalResponse<'a> {
+        client.get("/admin/me").cookies(cookies).dispatch().await
+    }
 
     //Register a test super admin
     let username = "test-admin";
@@ -284,6 +289,11 @@ async fn login() {
         .await;
     assert_eq!(response.status(), Status::Forbidden);
     assert!(response.cookies().is_empty());
+    //Verify that we can get the admin we logged in as.
+    assert_eq!(
+        get_me(&client, response.cookies()).await.status(),
+        Status::NotFound
+    );
 
     //Try to login with the wrong password
     let form = format!("username={}&password={}", username, "incorrect-password");
@@ -295,6 +305,10 @@ async fn login() {
         .await;
     assert_eq!(response.status(), Status::Forbidden);
     assert!(response.cookies().is_empty());
+    assert_eq!(
+        get_me(&client, response.cookies()).await.status(),
+        Status::NotFound
+    );
 
     //Login with the correct password
     let form = format!("username={}&password={}", username, password);
@@ -306,7 +320,15 @@ async fn login() {
         .await;
     assert_eq!(response.status(), Status::NoContent);
     assert_eq!(response.cookies().len(), 1);
-
+    //Check that we can get ourselves from the session.
+    let mut me = get_me(&client, response.cookies()).await;
+    assert_eq!(me.status(), Status::Ok);
+    assert_eq!(
+        serde_json::from_slice::<AdminSession>(&me.body_bytes().await.unwrap())
+            .unwrap()
+            .username,
+        username
+    );
     //Login again, but this time using all uppercase letters
     let form = format!("username={}&password={}", username.to_uppercase(), password);
     let response = client
@@ -317,6 +339,15 @@ async fn login() {
         .await;
     assert_eq!(response.status(), Status::NoContent);
     assert_eq!(response.cookies().len(), 1);
+    //Check that we can get ourselves from the session.
+    let mut me = get_me(&client, response.cookies()).await;
+    assert_eq!(me.status(), Status::Ok);
+    assert_eq!(
+        serde_json::from_slice::<AdminSession>(&me.body_bytes().await.unwrap())
+            .unwrap()
+            .username,
+        username
+    );
 }
 
 #[tokio::test]
