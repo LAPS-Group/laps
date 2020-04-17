@@ -229,33 +229,11 @@ pub async fn upload_module(
     };
     let mut stream = docker.build_image(options, None, Some(tarball.into()));
     while let Some(update) = stream.next().await {
-        let update = match update {
-            Ok(u) => Ok(u),
-            Err(e) => {
-                use bollard::errors::ErrorKind;
-                match e.kind() {
-                    ErrorKind::JsonDeserializeError { .. } => {
-                        warn!(
-                            "Failed to deserialize Docker response: {:?}. Trying to keep going...",
-                            e.kind()
-                        );
-                        continue;
-                    }
-                    ErrorKind::JsonDataError { .. } => {
-                        warn!(
-                            "Failed to deserialize Docker response: {} Trying to keep going...",
-                            e.kind(),
-                        );
-                        continue;
-                    }
-                    _ => {
-                        error!("Other Docker error: {}", e);
-                        Err(e)
-                    }
-                }
-            }
-        }
-        .map_err(|e| UserError::ModuleImport(e.to_string()))?;
+        let update = update.map_err(|e| {
+            error!("Error getting image build output: {:?}", e);
+            UserError::ModuleImport(e.to_string())
+        })?;
+
         debug!("Importing {}: {:?}", info, update);
         if let BuildImageResults::BuildImageError {
             error,

@@ -1,4 +1,5 @@
 use rocket::response::NamedFile;
+use rocket_contrib::json::Json;
 
 mod adminsession;
 use super::mime_consts;
@@ -19,4 +20,9 @@ mod test;
 #[get("/admin")]
 pub async fn index(_session: AdminSession) -> Option<NamedFile> {
     NamedFile::open("dist/admin.html").ok()
+}
+
+#[get("/admin/me")]
+pub async fn get_me(session: AdminSession) -> Json<AdminSession> {
+    Json(session)
 }

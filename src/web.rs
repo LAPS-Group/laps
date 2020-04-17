@@ -35,6 +35,7 @@ pub async fn run() {
             routes![
                 admin::delete_map,
                 admin::get_all_modules,
+                admin::get_me,
                 admin::get_module_logs,
                 admin::index,
                 admin::login,
