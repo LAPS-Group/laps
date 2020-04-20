@@ -150,7 +150,7 @@ pub async fn submit(
         .await?;
 
     //Job submitted, now generate a token the user can use to get the result
-    let mut buffer = vec![0u8; 256];
+    let mut buffer = vec![0u8; 64];
     rand::thread_rng().fill_bytes(&mut buffer);
     let token = base64::encode_config(&buffer, base64::URL_SAFE_NO_PAD);
 
