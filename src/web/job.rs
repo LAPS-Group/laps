@@ -150,7 +150,7 @@ pub async fn submit(
         .await?;
 
     //Job submitted, now generate a token the user can use to get the result
-    let mut buffer = vec![0u8; 256];
+    let mut buffer = vec![0u8; 64];
     rand::thread_rng().fill_bytes(&mut buffer);
     let token = base64::encode_config(&buffer, base64::URL_SAFE_NO_PAD);
 
@@ -289,9 +289,11 @@ mod test {
     use super::*;
     use crate::{module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key};
     use rocket::{http::Status, local::Client};
+    use serial_test::serial;
 
     //Test that submitting and receiving of jobs works
     #[tokio::test]
+    #[serial]
     async fn submission() {
         //setup
         //Need both the result_redis pool and the normal one for this test.
@@ -389,6 +391,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial]
     async fn rate_limiting() {
         //setup
         let redis_pool = crate::create_redis_pool().await;
@@ -422,6 +425,7 @@ mod test {
 
     //Test that we avoid unnecesarry calculations of the same job.
     #[tokio::test]
+    #[serial]
     async fn job_cache() {
         //setup
         let redis_pool = crate::create_redis_pool().await;
@@ -494,6 +498,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial]
     async fn job_validation() {
         //Setup
         let redis_pool = crate::create_redis_pool().await;

@@ -179,10 +179,12 @@ pub async fn get_registered_modules(
 #[cfg(test)]
 mod test {
     use crate::util::create_redis_backend_key;
+    use serial_test::serial;
     use std::time::Duration;
     use tokio::time;
 
     #[tokio::test]
+    #[serial]
     async fn module_registration() {
         //setup
         let pool = crate::create_redis_pool().await;

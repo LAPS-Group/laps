@@ -128,7 +128,7 @@ class Runner:
 
     def create_backend_redis_key(self, name):
         if self.test_mode:
-            return "laps.test.backend.{}".format(name)
+            return "laps.testing.backend.{}".format(name)
         else:
             return "laps.backend.{}".format(name)
 

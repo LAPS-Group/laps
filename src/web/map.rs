@@ -73,9 +73,11 @@ mod test {
     use super::*;
     use laps_convert::ImageMetadata;
     use rocket::{http::Status, local::Client};
+    use serial_test::serial;
 
     //Test the listing of available maps and getting of map data
     #[tokio::test]
+    #[serial]
     async fn get_maps() {
         // Test setup
         let redis = crate::create_redis_pool().await;

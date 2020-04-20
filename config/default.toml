@@ -28,3 +28,7 @@ additional_connections = 2
 # How long a session needs to be inactive for to expire in seconds.
 # The timeout is reset every time the session gets used.
 session_timeout = 3600
+#How long a password must be before it is accepted
+minimum_password_length = 8
+#A password cannot be longer than this.
+maximum_password_length = 128

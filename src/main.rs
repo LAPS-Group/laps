@@ -55,6 +55,10 @@ struct JobConfig {
 struct LoginConfig {
     //Timeout in seconds for sessions
     session_timeout: u32,
+    //Minimum password length
+    minimum_password_length: u8,
+    //Maximum password length
+    maximum_password_length: u8,
 }
 
 lazy_static! {
