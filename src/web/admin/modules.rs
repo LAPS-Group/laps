@@ -8,8 +8,8 @@ use crate::{
 };
 use bollard::{
     container::{
-        Config, CreateContainerOptions, HostConfig, ListContainersOptions, RestartContainerOptions,
-        StartContainerOptions, StopContainerOptions,
+        APIContainers, Config, CreateContainerOptions, HostConfig, ListContainersOptions,
+        RestartContainerOptions, StartContainerOptions, StopContainerOptions,
     },
     image::{APIImages, BuildImageOptions, BuildImageResults, ListImagesOptions},
     Docker,
@@ -66,12 +66,20 @@ pub async fn get_module_logs<'a>(
     }
 }
 
+#[derive(Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ModuleState {
+    Running,
+    Stopped,
+    Failed(i32),
+}
+
 //Return value for the module structs, with an additional field to determine if a module is currently running.
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct PathModule {
-    running: bool,
+    pub state: ModuleState,
     #[serde(flatten)]
-    module: ModuleInfo,
+    pub module: ModuleInfo,
 }
 
 fn extract_module_info_from_tag(tag: &str) -> Option<ModuleInfo> {
@@ -89,6 +97,22 @@ async fn running_modules(docker: &Docker) -> Result<Vec<ModuleInfo>, BackendErro
         .await?
         .into_iter()
         .map(|s| extract_module_info_from_tag(&s.image).unwrap())
+        .collect())
+}
+
+//Get all modules along with their container options.
+async fn list_all_modules(
+    docker: &Docker,
+) -> Result<Vec<(ModuleInfo, APIContainers)>, BackendError> {
+    let options = ListContainersOptions::<String> {
+        all: true,
+        ..Default::default()
+    };
+    Ok(docker
+        .list_containers(Some(options))
+        .await?
+        .into_iter()
+        .filter_map(|m| extract_module_info_from_tag(&m.image).map(|i| (i, m)))
         .collect())
 }
 
@@ -126,6 +150,36 @@ pub(super) async fn module_is_running(
     Ok(running_modules.iter().any(|m| m == module))
 }
 
+//Get a pathfinding module's state from `container`.
+fn get_container_state(container: &APIContainers) -> ModuleState {
+    match container.state.as_str() {
+        "running" => ModuleState::Running,
+        "exited" => {
+            //If exited, check the exit code. There doesn't seem to be a good way to do this,
+            //so assume that the format won't change.
+            //The format looks like "Exited (code) [...]" where `code` is the exit code.
+
+            //Find the first parenthesis.
+            if let Some(p) = container.status.find('(') {
+                //Assume that the format is correct if we got here
+                let second_par = container.status[p..].find(')').unwrap();
+                //Extract the code itself from the string.
+                let exit_code: i32 = container.status[p + 1..p + second_par].parse().unwrap();
+                ModuleState::Failed(exit_code)
+            } else {
+                //We should always be able to find the parenthesis, but if it fails,
+                //just ignore the error and say that it's stopped, because that is still correct.
+                error!(
+                    "Couldn't find '(' in container status: {}",
+                    container.status
+                );
+                ModuleState::Stopped
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
 #[get("/module/all")]
 pub async fn get_all_modules(
     docker: State<'_, Docker>,
@@ -136,7 +190,7 @@ pub async fn get_all_modules(
         .list_images(None::<ListImagesOptions<String>>)
         .await?;
 
-    let running_containers = running_modules(&docker).await?;
+    let all_modules = list_all_modules(&docker).await?;
 
     let mut out = Vec::new();
     for image in images {
@@ -145,9 +199,18 @@ pub async fn get_all_modules(
             //A valid tag created by the backend will always have a version.
             let module = extract_module_info_from_tag(&tag).unwrap();
 
-            //Check if the container we just found is actually running
-            let running = running_containers.iter().any(|s| s == &module);
-            out.push(PathModule { running, module });
+            //Look for a container associated with this image.
+            let state = match all_modules.iter().find(|(m, _)| m == &module) {
+                Some((_, container)) => {
+                    //Found a container. Check it's state to return the proper status.
+                    get_container_state(&container)
+                }
+                //If there's no container associated with the image, it simply hasn't been created yet,
+                //and we can just say that it's stopped.
+                None => ModuleState::Stopped,
+            };
+
+            out.push(PathModule { state, module });
         }
     }
     Ok(Json(out))

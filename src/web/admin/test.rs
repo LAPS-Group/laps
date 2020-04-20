@@ -385,7 +385,7 @@ async fn module_logs() {
     assert_eq!(response.status(), Status::NotFound);
 
     //Upload a test module
-    let tarball = get_test_container().await;
+    let tarball = get_test_container();
     let response = upload_test_image(&client, &cookies, &tarball, name, version).await;
     assert_eq!(response.status(), Status::Created);
 
@@ -422,11 +422,24 @@ async fn module_logs() {
 }
 
 //Read the test container from disk.
-async fn get_test_container() -> Vec<u8> {
+fn get_test_container() -> Vec<u8> {
     //Use blocking IO for this because async files are extremely slow...
     let mut file = std::fs::File::open(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/test_data/test_module.tar"
+    ))
+    .unwrap();
+    let mut tarball = Vec::new();
+    file.read_to_end(&mut tarball).unwrap();
+    tarball
+}
+
+//Read the failing test container from disk.
+fn get_failing_test_container() -> Vec<u8> {
+    //Use blocking IO for this because async files are extremely slow...
+    let mut file = std::fs::File::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/test_data/instant_fail_test_module.tar"
     ))
     .unwrap();
     let mut tarball = Vec::new();
@@ -441,7 +454,11 @@ async fn clean_docker(docker: &Docker) {
         ..Default::default()
     };
     //We have to delete both the test image and the imported test image.
-    for image in &["laps-test-image:latest", "laps-test:0.1.0"] {
+    for image in &[
+        "laps-test-image:latest",
+        "laps-test:0.1.0",
+        "laps-failing-test:0.1.0",
+    ] {
         match docker.remove_image(image, Some(options), None).await {
             Ok(_) => println!("Found and deleted old test image {}", image),
             Err(e) => println!("Did not remove old test image: {}", e),
@@ -453,7 +470,7 @@ async fn clean_docker(docker: &Docker) {
         force: true,
         ..Default::default()
     };
-    for container in &["laps-test-0.1.0"] {
+    for container in &["laps-test-0.1.0", "laps-failing-test-0.1.0"] {
         match docker.remove_container(container, Some(options)).await {
             Ok(_) => println!("Found and deleted old test container {}", container),
             Err(e) => println!("Did not remove old test container: {}", e),
@@ -506,7 +523,13 @@ async fn get_modules() {
     let rocket = rocket::ignite()
         .mount(
             "/",
-            routes![login, get_all_modules, upload_module, register_super_admin],
+            routes![
+                login,
+                get_all_modules,
+                upload_module,
+                register_super_admin,
+                restart_module
+            ],
         )
         .manage(redis.clone())
         .manage(crate::connect_to_docker().await);
@@ -520,7 +543,7 @@ async fn get_modules() {
     clean_docker(&docker).await;
 
     //Ensure the test image is built
-    let tarball = get_test_container().await;
+    let tarball = get_test_container();
 
     //Upload the test image using the endpoint
     let module = ModuleInfo {
@@ -531,7 +554,7 @@ async fn get_modules() {
         upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
     assert_eq!(response.status(), Status::Created);
 
-    //Check that the test module is returned by /module/all.
+    //Check that the test module is returned by /module/all, and that it's not running.
     let mut response = client
         .get("/module/all")
         .cookies(cookies.clone())
@@ -539,9 +562,16 @@ async fn get_modules() {
         .await;
     assert_eq!(response.status(), Status::Ok);
     assert_eq!(response.content_type().unwrap(), ContentType::JSON);
-    let images: Vec<ModuleInfo> =
+    let images: Vec<PathModule> =
         serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
-    images.into_iter().find(|m| m == &module).unwrap();
+    assert!(
+        images
+            .into_iter()
+            .find(|m| &m.module == &module)
+            .unwrap()
+            .state
+            == ModuleState::Stopped
+    );
 
     //Try to add the module again, should fail as we already have a module with the same name and version.
     let response =
@@ -558,6 +588,67 @@ async fn get_modules() {
     )
     .await;
     assert_eq!(response.status(), Status::BadRequest);
+
+    //Now test that a failing module shows up as failing...
+    //First, upload a module which fails immediately:
+    let tarball = get_failing_test_container();
+    let failing_module = ModuleInfo {
+        name: "laps-failing-test".into(),
+        version: "0.1.0".into(),
+    };
+    let response = upload_test_image(
+        &client,
+        &cookies,
+        &tarball,
+        &failing_module.name,
+        &failing_module.version,
+    )
+    .await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Then start both the failing image and the test image up, not checking if it is running because that's
+    // the start_stop_module test's job.
+    let response = client
+        .post(format!(
+            "/module/{}/{}/restart",
+            module.name, module.version
+        ))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
+    let response = client
+        .post(format!(
+            "/module/{}/{}/restart",
+            failing_module.name, failing_module.version
+        ))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Sleep for a bit to let the modules start up...
+    tokio::time::delay_for(std::time::Duration::from_millis(500)).await;
+
+    //Now ensure that they are both returned by the /module/all endpoint and that their states are correct:
+    let mut response = client
+        .get("/module/all")
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    assert_eq!(response.content_type().unwrap(), ContentType::JSON);
+    let images: Vec<PathModule> =
+        serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
+    assert!(images.iter().find(|m| m.module == module).unwrap().state == ModuleState::Running);
+    assert!(
+        images
+            .iter()
+            .find(|m| m.module == failing_module)
+            .unwrap()
+            .state
+            == ModuleState::Failed(1)
+    );
 }
 
 #[tokio::test]
@@ -598,7 +689,7 @@ async fn start_stop_module() {
     assert!(!module_is_running(&docker, &module).await.unwrap());
 
     //Upload the test image
-    let tarball = get_test_container().await;
+    let tarball = get_test_container();
     let response =
         upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
     assert_eq!(response.status(), Status::Created);
@@ -629,7 +720,7 @@ async fn start_stop_module() {
     assert_eq!(response.status(), Status::NoContent);
     assert!(module_is_running(&docker, &module).await.unwrap());
 
-    //Now kill it
+    //Now kill the laps-test module.
     let response = client
         .post(format!("/module/{}/{}/stop", module.name, module.version))
         .cookies(cookies.clone())
