@@ -63,7 +63,7 @@ pub async fn login(
             //ThreadRng does not implement send so make it short-lived
             let token = {
                 let mut rng = rand::thread_rng();
-                let mut buffer = vec![0u8; 256];
+                let mut buffer = vec![0u8; 64];
                 rng.fill_bytes(&mut buffer);
                 base64::encode(buffer)
             };
