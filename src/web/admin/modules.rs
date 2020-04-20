@@ -93,7 +93,10 @@ async fn running_modules(docker: &Docker) -> Result<Vec<ModuleInfo>, BackendErro
 }
 
 //Check if a module exists.
-async fn module_exists(docker: &Docker, module: &ModuleInfo) -> Result<bool, BackendError> {
+pub(super) async fn module_exists(
+    docker: &Docker,
+    module: &ModuleInfo,
+) -> Result<bool, BackendError> {
     //Get a list of all modules
     let images: Vec<APIImages> = docker
         .list_images(None::<ListImagesOptions<String>>)

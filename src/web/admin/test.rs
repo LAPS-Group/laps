@@ -1,7 +1,7 @@
 use super::*;
 use crate::{module_handling::ModuleInfo, util};
 use bollard::{image::RemoveImageOptions, Docker};
-use modules::module_is_running;
+use modules::{module_exists, module_is_running};
 use multipart::client::lazy::Multipart;
 use rocket::{
     http::{ContentType, Cookie, Status},
@@ -589,15 +589,21 @@ async fn start_stop_module() {
     //Remove any old images if they exist and the container
     clean_docker(&docker).await;
 
-    //Upload the test image
+    //Check that the module doesn't exist from before
     let module = ModuleInfo {
         name: "laps-test".into(),
         version: "0.1.0".into(),
     };
+    assert!(!module_exists(&docker, &module).await.unwrap());
+    assert!(!module_is_running(&docker, &module).await.unwrap());
+
+    //Upload the test image
     let tarball = get_test_container().await;
     let response =
         upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
     assert_eq!(response.status(), Status::Created);
+    assert!(module_exists(&docker, &module).await.unwrap());
+    assert!(!module_is_running(&docker, &module).await.unwrap());
 
     //Interresting part: Start the module and check that it's running
     let response = client
