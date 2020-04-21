@@ -647,7 +647,7 @@ async fn get_modules() {
             .find(|m| m.module == failing_module)
             .unwrap()
             .state
-            == ModuleState::Failed(1)
+            == ModuleState::Failed { exit_code: 1 }
     );
 }
 

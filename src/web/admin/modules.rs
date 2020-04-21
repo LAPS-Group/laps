@@ -68,15 +68,17 @@ pub async fn get_module_logs<'a>(
 
 #[derive(Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(tag = "state")]
 pub enum ModuleState {
     Running,
     Stopped,
-    Failed(i32),
+    Failed { exit_code: i32 },
 }
 
 //Return value for the module structs, with an additional field to determine if a module is currently running.
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct PathModule {
+    #[serde(flatten)]
     pub state: ModuleState,
     #[serde(flatten)]
     pub module: ModuleInfo,
@@ -165,7 +167,7 @@ fn get_container_state(container: &APIContainers) -> ModuleState {
                 let second_par = container.status[p..].find(')').unwrap();
                 //Extract the code itself from the string.
                 let exit_code: i32 = container.status[p + 1..p + second_par].parse().unwrap();
-                ModuleState::Failed(exit_code)
+                ModuleState::Failed { exit_code }
             } else {
                 //We should always be able to find the parenthesis, but if it fails,
                 //just ignore the error and say that it's stopped, because that is still correct.
