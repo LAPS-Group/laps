@@ -3,6 +3,7 @@ import Vue from "vue";
 //import App from './components/App.vue';
 import SendCords from "./components/SendCords.vue";
 import getMap from "./components/GetMap.vue";
+//import mapMenu from "./components/mapMenu.vue";
 import getAlgorithm from "./components/GetAlgorithm.vue";
 import header from "./components/Header.vue";
 //import laps_logo from "./LAPS1.png";
@@ -23,4 +24,9 @@ new Vue({
 new Vue({
   el: "#header",
   render: h => h(header)
-});
+}); /*
+new Vue({
+  el:"#mapMenu",
+  render:m=>m(mapMenu)
+})
+*/
