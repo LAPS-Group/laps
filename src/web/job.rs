@@ -6,7 +6,7 @@ use crate::{
 use futures::TryStreamExt;
 use rand::RngCore;
 use rocket::{
-    http::{ContentType, Cookie, Status},
+    http::{ContentType, Status},
     Response, State,
 };
 use rocket_contrib::json::Json;
@@ -344,7 +344,10 @@ mod test {
     use crate::{
         module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key, web,
     };
-    use rocket::{http::Status, local::Client};
+    use rocket::{
+        http::{Cookie, Status},
+        local::Client,
+    };
     use serial_test::serial;
 
     #[tokio::test]

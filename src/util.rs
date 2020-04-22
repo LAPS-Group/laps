@@ -1,6 +1,5 @@
-use crate::{module_handling::ModuleInfo, types::JobResult, web::job::JobSubmission};
+use crate::{module_handling::ModuleInfo, web::job::JobSubmission};
 use rand::{thread_rng, RngCore};
-use serde::Deserialize;
 
 ///Create a general Redis key to be used in the system.
 #[cfg(not(test))]

@@ -1,6 +1,5 @@
 use super::*;
 use crate::{module_handling::ModuleInfo, util};
-use bollard::{image::RemoveImageOptions, Docker};
 use modules::{module_exists, module_is_running};
 use multipart::client::lazy::Multipart;
 use rocket::{

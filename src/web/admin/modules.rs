@@ -45,7 +45,7 @@ pub async fn get_module_logs<'a>(
                 .into_iter()
                 .fold(Vec::new(), |mut out, mut x| {
                     out.append(&mut x);
-                    out.push('\n' as u8);
+                    out.push(b'\n');
                     out
                 });
 

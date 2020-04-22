@@ -1,14 +1,13 @@
 //Test utility functions and such
 
-use crate::{module_handling::ModuleInfo, util};
+use crate::util;
 use bollard::{image::RemoveImageOptions, Docker};
 use laps_convert::create_normalized_png;
 use multipart::client::lazy::Multipart;
 use rocket::{
-    http::{ContentType, Cookie, Status},
+    http::{ContentType, Cookie},
     local::{Client, LocalResponse},
 };
-use serial_test::serial;
 use std::io::Read;
 
 //Insert some test mapdata to use in the tests. Will always place it at map ID 1. Returns the width and height of the image.
