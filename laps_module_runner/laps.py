@@ -19,13 +19,13 @@ parser.add_argument('--test', action='store_true')
 
 args = parser.parse_args()
 
-
 # Use a global variable to keep track of whether we're running or not.
 # This is required in order to handle the signals properly.
 
 g_running = True
 
-class RunnerException(Exception):
+# Class to be used when a job fails.
+class JobFailure(Exception):
     pass
 
 class Runner:
@@ -71,7 +71,7 @@ class Runner:
         key = self.create_backend_redis_key("registered_modules")
         if self.redis.sismember(key, ident):
             # We already exist, throw an error
-            raise RunnerException("Already have registered a module {0} v{1}".format(self.name, self.version))
+            raise Exception("Already have registered a module {0} v{1}".format(self.name, self.version))
 
         self.redis.rpush(
             self.create_backend_redis_key("register-module"),
@@ -87,6 +87,8 @@ class Runner:
         def signal_handler(sig, frame):
             self.log_info("Shutdown signal received, shutting down")
 
+            # If we're just sitting around waiting for a job we can just exit immediately.
+            # Otherwise we would have to receive a job and only then be able to exit.
             if blocking:
                 sys.exit(0)
             else:
@@ -97,37 +99,51 @@ class Runner:
         signal.signal(signal.SIGINT, signal_handler)
 
         while g_running:
-            # Redispy returns the key which was popped in addition to the value
-            response = self.redis.blpop(self.job_key, 0)
-            blocking = False
-            should_run = True
-
-            (_, response) = response
-            value = json.loads(response)
-            job_id = value["job_id"]
-            self.log_info("Got job {0}".format(job_id))
             try:
-                (should_run, response) = handler(self, value)
-            except Exception as exp:
-                message = "Handler failed: type: {0} contents: {1}".format(type(exp), exp)
-                self.log_error(message)
-                break
-            if not should_run:
-                g_running = False
+                # Redispy returns the key which was popped in addition to the value
+                (_, job) = self.redis.blpop(self.job_key, 0)
+                blocking = False
+                should_run = True
 
-            # Push module result to redis
-            response["job_id"] = job_id
-            self.redis.lpush(
-                self.create_backend_redis_key("path-results"),
-                json.dumps(response)
-            )
-            self.log_info("Completed job {}".format(job_id))
-            blocking = True
+                #Run the handler function
+                value = json.loads(job)
+                job_id = value["job_id"]
+                self.log_info("Got job {0}".format(job_id))
+                # This will throw some kind of exception if things go wrong
+                result = handler(self, value)
+
+                # Send the result to the backend.
+                response = {
+                    "job_id": job_id,
+                    "success": True,
+                    "points": result
+                }
+                self.redis.lpush(
+                    self.create_backend_redis_key("path-results"),
+                    json.dumps(response)
+                )
+                self.log_info("Completed job {}".format(job_id))
+                blocking = True
+
+            except JobFailure as exp:
+                # A manually triggered failure condition, intentionally done by the module developer:
+                message = "Job {0} failed: {1}".format(job_id, exp)
+                self.log_error(message)
+                self.__fail_job(job_id)
+            except Exception as exp:
+                # An unexpected failure from the module
+                message = "Unexpected handler exception: type: {0} contents: {1}".format(type(exp), exp)
+                self.log_error(message)
+                self.__fail_job(job_id)
+
+    def __fail_job(self, job_id):
+        message = {"job_id": job_id, "success": False}
+        self.redis.lpush(self.create_backend_redis_key("path-results"), json.dumps(message))
 
     def create_redis_key(self, name):
         prefix = "laps.runner"
         if self.test_mode:
-            prefix = "laps.test.runner"
+            prefix = "laps.testing.runner"
         return "{0}.{1}:{2}.{3}".format(prefix, self.name, self.version, name)
 
     def create_backend_redis_key(self, name):

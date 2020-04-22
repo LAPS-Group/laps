@@ -119,10 +119,7 @@ async fn list_all_modules(
 }
 
 //Check if a module exists.
-pub(super) async fn module_exists(
-    docker: &Docker,
-    module: &ModuleInfo,
-) -> Result<bool, BackendError> {
+pub async fn module_exists(docker: &Docker, module: &ModuleInfo) -> Result<bool, BackendError> {
     //Get a list of all modules
     let images: Vec<APIImages> = docker
         .list_images(None::<ListImagesOptions<String>>)
@@ -144,10 +141,7 @@ pub(super) async fn module_exists(
 }
 
 //Check if a module is running
-pub(super) async fn module_is_running(
-    docker: &Docker,
-    module: &ModuleInfo,
-) -> Result<bool, BackendError> {
+pub async fn module_is_running(docker: &Docker, module: &ModuleInfo) -> Result<bool, BackendError> {
     let running_modules = running_modules(&docker).await?;
     Ok(running_modules.iter().any(|m| m == module))
 }

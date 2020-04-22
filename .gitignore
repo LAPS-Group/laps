@@ -2,5 +2,5 @@
 **/*.rs.bk
 .log/
 node_modules/
-test_data/*.tar
+test_data/test_modules/*.tar
 __pycache__/

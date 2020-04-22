@@ -23,7 +23,7 @@ async fn create_test_account(username: &str, password: &str, client: &Client) {
 }
 
 //Create an account and sign in for use in these tests
-async fn create_test_account_and_login(client: &Client) -> Vec<Cookie<'static>> {
+pub async fn create_test_account_and_login(client: &Client) -> Vec<Cookie<'static>> {
     //Register a test super admin
     let username = "test-admin";
     let password = "password";
@@ -369,7 +369,7 @@ async fn module_logs() {
     let client = Client::new(rocket).unwrap();
     let mut conn = redis.get().await;
     crate::test::clear_redis(&mut conn).await;
-    clean_docker(&crate::connect_to_docker().await).await;
+    crate::test::clean_docker(&crate::connect_to_docker().await).await;
     tokio::spawn(crate::module_handling::run(redis.clone()));
 
     let cookies = create_test_account_and_login(&client).await;
@@ -385,8 +385,14 @@ async fn module_logs() {
     assert_eq!(response.status(), Status::NotFound);
 
     //Upload a test module
-    let tarball = get_test_container();
-    let response = upload_test_image(&client, &cookies, &tarball, name, version).await;
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        name,
+        version,
+    )
+    .await;
     assert_eq!(response.status(), Status::Created);
 
     //Get the module logs again, this time it should exist but be empty:
@@ -421,98 +427,6 @@ async fn module_logs() {
     assert!(body.contains("Registered as"));
 }
 
-//Read the test container from disk.
-fn get_test_container() -> Vec<u8> {
-    //Use blocking IO for this because async files are extremely slow...
-    let mut file = std::fs::File::open(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/test_data/test_module.tar"
-    ))
-    .unwrap();
-    let mut tarball = Vec::new();
-    file.read_to_end(&mut tarball).unwrap();
-    tarball
-}
-
-//Read the failing test container from disk.
-fn get_failing_test_container() -> Vec<u8> {
-    //Use blocking IO for this because async files are extremely slow...
-    let mut file = std::fs::File::open(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/test_data/instant_fail_test_module.tar"
-    ))
-    .unwrap();
-    let mut tarball = Vec::new();
-    file.read_to_end(&mut tarball).unwrap();
-    tarball
-}
-
-//Cleanup test containers and test images
-async fn clean_docker(docker: &Docker) {
-    let options = RemoveImageOptions {
-        force: true,
-        ..Default::default()
-    };
-    //We have to delete both the test image and the imported test image.
-    for image in &[
-        "laps-test-image:latest",
-        "laps-test:0.1.0",
-        "laps-failing-test:0.1.0",
-    ] {
-        match docker.remove_image(image, Some(options), None).await {
-            Ok(_) => println!("Found and deleted old test image {}", image),
-            Err(e) => println!("Did not remove old test image: {}", e),
-        }
-    }
-
-    //Delete all containers
-    let options = bollard::container::RemoveContainerOptions {
-        force: true,
-        ..Default::default()
-    };
-    for container in &["laps-test-0.1.0", "laps-failing-test-0.1.0"] {
-        match docker.remove_container(container, Some(options)).await {
-            Ok(_) => println!("Found and deleted old test container {}", container),
-            Err(e) => println!("Did not remove old test container: {}", e),
-        }
-    }
-}
-
-//Upload a testing image from `tarball` with name `name` and version `version`.
-async fn upload_test_image<'a>(
-    client: &'a Client,
-    cookies: &'a Vec<Cookie<'a>>,
-    tarball: &'a [u8],
-    name: &'a str,
-    version: &'a str,
-) -> LocalResponse<'a> {
-    let mut multipart = Multipart::new()
-        .add_stream::<&str, &[u8], &str>(
-            "module",
-            tarball,
-            None,
-            Some("application/x-tar".parse().unwrap()),
-        )
-        .add_text("version", version)
-        .add_text("name", name)
-        .prepare()
-        .unwrap();
-    let mut form = Vec::new();
-    let boundary = multipart.boundary().to_string();
-    multipart.read_to_end(&mut form).unwrap();
-
-    let mut request = client
-        .post("/module")
-        .header(ContentType::with_params(
-            "multipart",
-            "form-data",
-            ("boundary", boundary.clone()),
-        ))
-        .cookies(cookies.clone());
-    request.set_body(form.as_slice());
-    request.dispatch().await
-}
-
 #[tokio::test]
 #[serial]
 //Also fails if login fails
@@ -540,18 +454,21 @@ async fn get_modules() {
     let cookies = create_test_account_and_login(&client).await;
 
     //Remove the test image if it exists
-    clean_docker(&docker).await;
-
-    //Ensure the test image is built
-    let tarball = get_test_container();
+    crate::test::clean_docker(&docker).await;
 
     //Upload the test image using the endpoint
     let module = ModuleInfo {
         name: "laps-test".into(),
         version: "0.1.0".into(),
     };
-    let response =
-        upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+    )
+    .await;
     assert_eq!(response.status(), Status::Created);
 
     //Check that the test module is returned by /module/all, and that it's not running.
@@ -574,12 +491,18 @@ async fn get_modules() {
     );
 
     //Try to add the module again, should fail as we already have a module with the same name and version.
-    let response =
-        upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+    )
+    .await;
     assert_eq!(response.status(), Status::BadRequest);
 
     //Upload an invalid module.
-    let response = upload_test_image(
+    let response = crate::test::upload_test_image(
         &client,
         &cookies,
         &[0u8],
@@ -591,15 +514,14 @@ async fn get_modules() {
 
     //Now test that a failing module shows up as failing...
     //First, upload a module which fails immediately:
-    let tarball = get_failing_test_container();
     let failing_module = ModuleInfo {
         name: "laps-failing-test".into(),
         version: "0.1.0".into(),
     };
-    let response = upload_test_image(
+    let response = crate::test::upload_test_image(
         &client,
         &cookies,
-        &tarball,
+        crate::test::INSTANTLY_FAILING_TEST_CONTAINER,
         &failing_module.name,
         &failing_module.version,
     )
@@ -678,7 +600,7 @@ async fn start_stop_module() {
     let cookies = create_test_account_and_login(&client).await;
 
     //Remove any old images if they exist and the container
-    clean_docker(&docker).await;
+    crate::test::clean_docker(&docker).await;
 
     //Check that the module doesn't exist from before
     let module = ModuleInfo {
@@ -689,9 +611,14 @@ async fn start_stop_module() {
     assert!(!module_is_running(&docker, &module).await.unwrap());
 
     //Upload the test image
-    let tarball = get_test_container();
-    let response =
-        upload_test_image(&client, &cookies, &tarball, &module.name, &module.version).await;
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+    )
+    .await;
     assert_eq!(response.status(), Status::Created);
     assert!(module_exists(&docker, &module).await.unwrap());
     assert!(!module_is_running(&docker, &module).await.unwrap());

@@ -1,7 +1,12 @@
 use rocket::response::NamedFile;
 use rocket_contrib::serve::StaticFiles;
 
+//Export the admin module as pub if in test mode so any other tests which require a login can do so.
+#[cfg(test)]
+pub mod admin;
+#[cfg(not(test))]
 mod admin;
+
 mod algorithms;
 pub mod job;
 mod map;

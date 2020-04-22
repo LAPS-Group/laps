@@ -15,7 +15,7 @@ pub use map::*;
 pub use modules::*;
 
 #[cfg(test)]
-mod test;
+pub mod test;
 
 #[get("/admin")]
 pub async fn index(_session: AdminSession) -> Option<NamedFile> {

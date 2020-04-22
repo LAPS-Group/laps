@@ -1,12 +1,12 @@
 use crate::{
     module_handling::ModuleInfo,
-    types::{BackendError, Vector},
+    types::{BackendError, JobResult, Vector},
     util,
 };
 use futures::TryStreamExt;
 use rand::RngCore;
 use rocket::{
-    http::{ContentType, Status},
+    http::{ContentType, Cookie, Status},
     Response, State,
 };
 use rocket_contrib::json::Json;
@@ -222,6 +222,49 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "status")]
+pub enum JobPoll {
+    Ready { result: JobResult },
+    Pending,
+    Error,
+}
+
+//Repeatedly try to get a job result using the system configuration.
+pub async fn try_poll_job_result(redis: &mut darkredis::Connection, job_id: i32) -> JobPoll {
+    let times = crate::CONFIG.jobs.poll_times;
+    let poll_interval =
+        std::time::Duration::from_secs((crate::CONFIG.jobs.poll_timeout / times) as u64);
+    let key = util::get_job_key(job_id);
+    for _ in 0..times {
+        let result = redis
+            .get(&key)
+            .await
+            .map(|s| {
+                s.map(|s| {
+                    dbg!(String::from_utf8_lossy(&s));
+                    serde_json::from_slice::<JobResult>(&s).unwrap()
+                })
+            })
+            .expect("getting job result");
+
+        //If we haven't gotten the result yet go to sleep for a bit. This does not block any threads
+        //so this is a safe thing to do.
+        if let Some(result) = result {
+            //Check if the job actually succeeded
+            if result.success {
+                return JobPoll::Ready { result };
+            } else {
+                return JobPoll::Error;
+            }
+        } else {
+            //zzz
+            tokio::time::delay_for(poll_interval).await;
+        }
+    }
+    JobPoll::Pending
+}
+
 //Get the result of a pathfinding job
 #[get("/job/<token>")]
 pub async fn result(
@@ -248,8 +291,8 @@ pub async fn result(
             //Poll for a result on this job
             let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
 
-            match util::try_poll_job_result(&mut conn, job_id).await {
-                Some(result) => {
+            match try_poll_job_result(&mut conn, job_id).await {
+                JobPoll::Ready { result } => {
                     //Decrement the rate-limiting key.
                     conn.decr(&rate_limit_key).await?;
 
@@ -266,8 +309,19 @@ pub async fn result(
 
                     Ok(response)
                 }
+                //Something went wrong in the pathfinding module.
+                JobPoll::Error => {
+                    conn.decr(rate_limit_key).await.unwrap();
+                    Ok(Response::build()
+                        .status(Status::InternalServerError)
+                        .sized_body(Cursor::new(
+                            "A pathfinding module failed to complete this job!",
+                        ))
+                        .await
+                        .finalize())
+                }
                 //Not ready yet
-                None => {
+                JobPoll::Pending => {
                     conn.decr(rate_limit_key).await.unwrap();
                     Ok(Response::build().status(Status::NoContent).finalize())
                 }
@@ -287,13 +341,155 @@ pub async fn result(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key};
+    use crate::{
+        module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key, web,
+    };
     use rocket::{http::Status, local::Client};
     use serial_test::serial;
 
-    //Test that submitting and receiving of jobs works
     #[tokio::test]
     #[serial]
+    //High-level test for job submission through laps.py.
+    async fn job_submission_integration() {
+        //setup
+        //Need both the result_redis pool and the normal one for this test.
+        let redis_result_pool = create_result_redis_pool().await;
+        let redis_pool = crate::create_redis_pool().await;
+        let mut conn = redis_pool.get().await;
+        let docker = crate::connect_to_docker().await;
+        crate::test::clean_docker(&docker).await;
+        tokio::spawn(crate::module_handling::run(redis_pool.clone()));
+        let rocket = rocket::ignite()
+            .mount(
+                "/",
+                routes![
+                    web::admin::login,
+                    web::admin::register_super_admin,
+                    web::admin::restart_module,
+                    web::admin::upload_module,
+                    result,
+                    submit,
+                ],
+            )
+            .manage(redis_result_pool)
+            .manage(docker)
+            .manage(redis_pool.clone());
+        let client = Client::new(rocket).unwrap();
+        crate::test::clear_redis(&mut conn).await;
+        crate::test::insert_test_mapdata(&mut conn).await;
+
+        //Setup and run the test module:
+        let cookies = web::admin::test::create_test_account_and_login(&client).await;
+
+        //A function to create a module and run a job on it. Returns the path to the job polling token.
+        async fn start_and_run_job(
+            client: &Client,
+            cookies: &Vec<Cookie<'static>>,
+            name: &str,
+            version: &str,
+            container: &[u8],
+        ) -> String {
+            let module = ModuleInfo {
+                name: name.into(),
+                version: version.into(),
+            };
+
+            let response = crate::test::upload_test_image(
+                client,
+                &cookies,
+                container,
+                &module.name,
+                &module.version,
+            )
+            .await;
+            assert_eq!(response.status(), Status::Created);
+            //Start the module
+            let response = client
+                .post(format!(
+                    "/module/{}/{}/restart",
+                    module.name, module.version
+                ))
+                .cookies(cookies.clone())
+                .dispatch()
+                .await;
+            assert_eq!(response.status(), Status::Created);
+
+            //The module might take some time to start up so we have to sleep for a little bit before we can continue.
+            tokio::time::delay_for(std::time::Duration::from_millis(200)).await;
+
+            //Run a job on the module
+            let job = serde_json::json!({
+                "map_id": 1,
+                "start": {
+                    "x": 1, "y": 1
+                },
+                "stop": {
+                    "x": 100, "y": 100
+                },
+                "algorithm": module
+            });
+            let mut response = client
+                .post("/job")
+                .header(ContentType::JSON)
+                .body(&serde_json::to_vec(&job).unwrap())
+                .dispatch()
+                .await;
+            assert_eq!(response.status(), Status::Accepted);
+
+            //Create the URL to poll for the job result.
+            format!("/job/{}", response.body_string().await.unwrap())
+        }
+
+        //This job should succeed.
+        let successful_job = start_and_run_job(
+            &client,
+            &cookies,
+            "laps-test",
+            "0.1.0",
+            crate::test::TEST_CONTAINER,
+        )
+        .await;
+
+        //Poll the job result until completion.
+        loop {
+            let response = client.get(&successful_job).dispatch().await;
+            match response.status() {
+                //Still pending...
+                Status::NoContent => (),
+                Status::Ok => {
+                    //If we got here we successfully completed the job and all is fine.
+                    break;
+                }
+                _ => panic!("Invalid status: {}", response.status()),
+            }
+        }
+
+        //This job should fail
+        let failing_job = start_and_run_job(
+            &client,
+            &cookies,
+            "laps-failing-test",
+            "0.1.0",
+            crate::test::FAILING_TEST_CONTAINER,
+        )
+        .await;
+
+        //Poll the job result until completion.
+        loop {
+            let response = client.get(&failing_job).dispatch().await;
+            match response.status() {
+                //Still pending...
+                Status::NoContent => (),
+                //If we got this status, all is well.
+                Status::InternalServerError => break,
+                _ => panic!("Invalid status: {}", response.status()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    //Test that submitting and receiving of jobs works on a low-level.
     async fn submission() {
         //setup
         //Need both the result_redis pool and the normal one for this test.
@@ -365,10 +561,12 @@ mod test {
         //Complete the job. Because we cleared the job id counter earlier, the job id is guaranteed to be 1.
         let job_id = 1;
         let info = JobResult {
+            success: true,
             job_id,
             points: vec![Vector { x: 0, y: 0 }, Vector { x: 0, y: 0 }],
         };
         let key = util::get_job_key(job_id);
+        dbg!(&serde_json::to_string(&info).unwrap());
         conn.set(key, serde_json::to_vec(&info).unwrap())
             .await
             .unwrap();

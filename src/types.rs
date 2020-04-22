@@ -17,7 +17,12 @@ pub struct Vector {
 //Struct for storing the ouptut of a pathfinding job.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobResult {
+    //The ID of the job.
     pub job_id: i32,
+    //Whether the job succeeded.
+    pub success: bool,
+    //The list of points containing the path of the job.
+    #[serde(default)]
     pub points: Vec<Vector>,
 }
 

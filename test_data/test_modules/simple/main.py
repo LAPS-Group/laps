@@ -13,7 +13,7 @@ def handle(runner, job):
     for i in range(round(dist_y)):
         points.append({"x": stop_x, "y": start_y + i})
 
-    return (True, {"points": points})
+    return points
 
 with laps.Runner() as runner:
     runner.log_error("This is an error")

@@ -1,10 +1,18 @@
 #!/bin/sh
 
-THIS_DIR=$PWD
-cd $THIS_DIR/test_data/test_module
-tar cvf test_module.tar main.py requirements.txt
-mv test_module.tar ..
+#This script kinda sucks but it's OK because nobody will see it :^)
+#Might be replaceable with a for loop and some trickery but my shell-fu couldn't figure it out
+#before giving up.
 
-cd $THIS_DIR/test_data/instant_fail_test_module
-tar cvf instant_fail_test_module.tar main.py requirements.txt
-mv instant_fail_test_module.tar ..
+THIS_DIR=$PWD
+cd $THIS_DIR/test_data/test_modules/simple
+tar cvf simple.tar main.py requirements.txt
+mv simple.tar ..
+
+cd $THIS_DIR/test_data/test_modules/instant_fail
+tar cvf instant_fail.tar main.py requirements.txt
+mv instant_fail.tar ..
+
+cd $THIS_DIR/test_data/test_modules/failing
+tar cvf failing.tar main.py requirements.txt
+mv failing.tar ..
