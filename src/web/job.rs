@@ -240,12 +240,7 @@ pub async fn try_poll_job_result(redis: &mut darkredis::Connection, job_id: i32)
         let result = redis
             .get(&key)
             .await
-            .map(|s| {
-                s.map(|s| {
-                    dbg!(String::from_utf8_lossy(&s));
-                    serde_json::from_slice::<JobResult>(&s).unwrap()
-                })
-            })
+            .map(|s| s.map(|s| serde_json::from_slice::<JobResult>(&s).unwrap()))
             .expect("getting job result");
 
         //If we haven't gotten the result yet go to sleep for a bit. This does not block any threads
@@ -569,7 +564,6 @@ mod test {
             points: vec![Vector { x: 0, y: 0 }, Vector { x: 0, y: 0 }],
         };
         let key = util::get_job_key(job_id);
-        dbg!(&serde_json::to_string(&info).unwrap());
         conn.set(key, serde_json::to_vec(&info).unwrap())
             .await
             .unwrap();

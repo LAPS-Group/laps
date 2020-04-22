@@ -71,8 +71,6 @@ pub async fn upload_test_image<'a>(
     name: &'a str,
     version: &'a str,
 ) -> LocalResponse<'a> {
-    dbg!(&name);
-    dbg!(&version);
     let mut multipart = Multipart::new()
         .add_stream::<&str, &[u8], &str>(
             "module",
