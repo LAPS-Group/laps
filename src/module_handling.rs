@@ -220,14 +220,14 @@ mod test {
             .unwrap();
 
         //Check that we were actually registered
-        time::delay_for(Duration::from_millis(100)).await; // Might take some time to handle the request so wait for a sec
+        time::delay_for(Duration::from_millis(100)).await; //We have to yield to let the registration code run.
         assert!(conn.sismember(&module_key, &module_info).await.unwrap());
 
         //Deregister ourselves
         conn.rpush(create_redis_backend_key("module-shutdown"), &module_info)
             .await
             .unwrap();
-        time::delay_for(Duration::from_millis(100)).await; // Might take some time to handle the request so wait for a sec
+        time::delay_for(Duration::from_millis(100)).await; //We have to yield to let the registration code run.
         assert!(!conn.sismember(&module_key, &module_info).await.unwrap());
     }
 }

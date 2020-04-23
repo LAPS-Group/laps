@@ -448,8 +448,9 @@ mod test {
                 .await;
             assert_eq!(response.status(), Status::Created);
 
-            //The module might take some time to start up so we have to sleep for a little bit before we can continue.
-            tokio::time::delay_for(std::time::Duration::from_millis(200)).await;
+            //The module might take some time to start up so we have to sleep for a bit to continue.
+            //More importantly, we have to yield control to the module handling task since the tests run in a single thread.
+            tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
 
             //Run a job on the module
             let job = serde_json::json!({

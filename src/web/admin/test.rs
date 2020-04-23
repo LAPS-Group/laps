@@ -410,10 +410,8 @@ async fn module_logs() {
         .await;
     assert_eq!(response.status(), Status::Created);
 
-    //Sleep for a bit to let the module start up, 500ms should be more than plenty.
-    //This line does mean this test is kind of flaky but by picking a large enough
-    //number it should be okay.
-    tokio::time::delay_for(std::time::Duration::from_millis(500)).await;
+    //Sleep for a bit to let the module start up, but more importantly yield control to the module handling task.
+    tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
 
     //Try to get the module logs, this time it should have the startup message.
     let mut response = client
@@ -548,8 +546,8 @@ async fn get_modules() {
         .await;
     assert_eq!(response.status(), Status::Created);
 
-    //Sleep for a bit to let the modules start up...
-    tokio::time::delay_for(std::time::Duration::from_millis(500)).await;
+    //Sleep for a bit to let the module start up, but more importantly yield control to the module handling task.
+    tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
 
     //Now ensure that they are both returned by the /module/all endpoint and that their states are correct:
     let mut response = client
