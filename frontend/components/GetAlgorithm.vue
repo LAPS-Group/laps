@@ -19,9 +19,9 @@ import { store, mutations } from "../store.js";
 
 export default {
   components: {
-    VueDropdown
+    VueDropdown,
   },
-  data: function() {
+  data: function () {
     return {
       algorithms_arr: null,
       selected_algorithms: null,
@@ -33,12 +33,12 @@ export default {
         textColor: "black",
         borderRadius: "1.5em",
         border: "1px solid gray",
-        width: 220
-      }
+        width: 220,
+      },
     };
   },
 
-  mounted: async function() {
+  mounted: async function () {
     this.algorithms_arr = await axios.get(getRoute("/algorithms"));
     console.log(this.algorithms_arr);
 
@@ -57,8 +57,8 @@ export default {
       let a = this.names_arr.indexOf(this.config.placeholder);
       this.selected_algorithms = this.algorithms_arr.data[a];
       mutations.setselected_algorithms(this.selected_algorithms);
-    }
-  }
+    },
+  },
 };
 </script>
 <style>

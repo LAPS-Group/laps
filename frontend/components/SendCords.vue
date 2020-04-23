@@ -42,9 +42,9 @@ export default {
   computed: {
     tester() {
       return store.tester;
-    }
+    },
   },
-  data: function() {
+  data: function () {
     return {
       coordinates: {
         //coordinates to be sent
@@ -53,27 +53,27 @@ export default {
         map_id: null,
         algorithm: {
           name: null,
-          version: null
-        }
+          version: null,
+        },
       },
       job_token: {},
       display: {
         data: {
-          points: []
-        }
+          points: [],
+        },
       },
       messageSent: false,
-      map_id: null
+      map_id: null,
     };
   },
 
   computed: {
     selected_algorithms() {
       return store.selected_algorithms;
-    }
+    },
   },
   methods: {
-    submitPoints: async function() {
+    submitPoints: async function () {
       //send map id
       //mutations.setmap_id(this.map_id);
       //getMap();
@@ -95,8 +95,8 @@ export default {
       //Send request
       let res = await axios.post(getRoute("/job"), message, {
         headers: {
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       });
       //Enables display of coordinates
       this.messageSent = true;
@@ -110,7 +110,7 @@ export default {
       //Sends update coordinates in store so they can be used by other components
       //mutations.setrecivedCoordinates(this.display.data);
     },
-    send_job_token: async function() {
+    send_job_token: async function () {
       try {
         const c = await axios.get(getRoute("/job/" + this.job_token));
         console.log("Job Done");
@@ -124,8 +124,8 @@ export default {
         }
         console.log("this is error");
       }
-    }
-  }
+    },
+  },
 };
 </script>
 <style>
