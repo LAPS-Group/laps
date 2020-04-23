@@ -1,29 +1,26 @@
-import axios from "axios";
 import Vue from "vue";
+//import axios from 'axios';
+//import App from './components/App.vue';
+import SendCords from "./components/SendCords.vue";
+import getMap from "./components/GetMap.vue";
+import getAlgorithm from "./components/GetAlgorithm.vue";
+import header from "./components/Header.vue";
+//import laps_logo from "./LAPS1.png";
 
-var app = new Vue({
-  el: "#root",
-  data: {
-    coordinates: {
-      start: {
-        x: 1,
-        y: 2
-      },
-      end: {
-        x: 2,
-        y: 4
-      }
-    }
-  },
-  methods: {
-    submit_points: function() {
-      let message = JSON.stringify(self.coordinates);
-      console.log(message);
-      axios.post("/job/submit", message, {
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-  }
+//Calls send app, its sends coordinates
+new Vue({
+  el: "#sendCords",
+  render: s => s(SendCords)
+});
+new Vue({
+  el: "#getMap",
+  render: g => g(getMap)
+});
+new Vue({
+  el: "#getAlgorithm",
+  render: a => a(getAlgorithm)
+});
+new Vue({
+  el: "#header",
+  render: h => h(header)
 });

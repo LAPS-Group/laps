@@ -2,24 +2,33 @@ jobs:
   include:
   - stage: test
     language: rust
+    cache: cargo
     os: linux
     rust: nightly
     before_install:
-    - sudo add-apt-repository ppa:ubuntugis/ubuntugis-unstable -y
-    - sudo apt-get update
-    - sudo apt-get install -y libgdal-dev
-    - export GDAL_STATIC=1
+      - sudo add-apt-repository ppa:ubuntugis/ubuntugis-unstable -y
+      - sudo apt-get update
+      - sudo apt-get install -y libgdal-dev
+      - export GDAL_STATIC=1
+    before_script: cargo install cargo-tarpaulin
     script:
-    - cargo build --workspace
-    - cargo test --workspace -- --test-threads 1
+      - bash ./build-test-data.sh
+      - cargo build --workspace
+      - cargo test --workspace
     services:
-    - redis
+      - redis
+      - docker
+    after_success: |
+      cargo tarpaulin --out Xml
+      bash <(curl -s https://codecov.io/bash)
   - stage: test
     language: node_js
-    node_js: 13.8
+    node_js: 12.16
     install:
     - npm install
-    script: bash ./format-check.sh
+    script:
+      - bash ./format.sh check
+      - npm run build
   - stage: deploy staging
     language: node_js
     node_js: 12.16

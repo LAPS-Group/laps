@@ -1,0 +1,17 @@
+# CONFIG FILE USED FOR TESTING
+# Modifying me only has an effect in test mode
+
+[jobs]
+#Make these way shorter to make tests run faster.
+token_timeout = 10
+poll_timeout = 1
+result_timeout = 1
+
+#make this smaller to make testing much easier
+max_polling_clients = 2
+additional_connections = 1
+
+[login]
+#Make the password lengths smaller so the tests are easier to read
+minimum_password_length = 4
+maximum_password_length = 8

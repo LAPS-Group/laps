@@ -9,6 +9,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate rocket;
 
+use bollard::Docker;
 use config::Config;
 use darkredis::ConnectionPool;
 use rocket::config::{Environment, LoggingLevel};
@@ -18,15 +19,46 @@ mod types;
 mod util;
 mod web;
 
+#[cfg(test)]
+mod test;
+
+//Struct describing the format of the configuration files
 #[derive(serde::Deserialize)]
 struct Configuration {
     pub redis: RedisConfig,
+    pub jobs: JobConfig,
+    pub login: LoginConfig,
 }
 
 #[derive(serde::Deserialize)]
 struct RedisConfig {
     address: String,
     password: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct JobConfig {
+    //Timeouts in seconds for different purposes
+    token_timeout: u32,  // the timeout for a token mapping key
+    poll_timeout: u32,   // the amount of time a user can poll a running job
+    poll_times: u32,     // the number of times to poll each job
+    result_timeout: u32, // how long the results of a pathfinding job is kept
+
+    //Number of maximum polling clients at once
+    max_polling_clients: u32,
+    //Additional connections to use in addition to max_polling clients,
+    //in order to quickly deny additional clients
+    additional_connections: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct LoginConfig {
+    //Timeout in seconds for sessions
+    session_timeout: u32,
+    //Minimum password length
+    minimum_password_length: u8,
+    //Maximum password length
+    maximum_password_length: u8,
 }
 
 lazy_static! {
@@ -46,6 +78,12 @@ lazy_static! {
             warn!("Failed to load local configuration: {}", e);
         }
 
+        //Load configuration for testing mode
+        if cfg!(test) {
+            //ok to unwrap as this is only used in tests
+            s.merge(config::File::with_name("config/test.toml").required(false)).unwrap();
+        }
+
         match s.try_into() {
             Ok(conf) => {
                 info!("Successfully loaded configuration!");
@@ -59,6 +97,7 @@ lazy_static! {
     };
 }
 
+//Create the Redis pool which is used in the application
 async fn create_redis_pool() -> ConnectionPool {
     let redis_conf = &CONFIG.redis;
     info!("Connecting to Redis at {}", redis_conf.address);
@@ -77,6 +116,23 @@ async fn create_redis_pool() -> ConnectionPool {
         Err(e) => {
             error!("Failed to connect to Redis: {:?}", e);
             std::process::exit(1);
+        }
+    }
+}
+
+//There's not much reason to use a connection pool for the Docker client because there will never be
+//that many administrators connecting at once. There's also no pre-made solution for Bollard so it's
+//best to not bother.
+async fn connect_to_docker() -> bollard::Docker {
+    info!("Connecting to Docker...");
+    match Docker::connect_with_local_defaults() {
+        Ok(d) => {
+            info!("Succesfully connected to Docker!");
+            d
+        }
+        Err(e) => {
+            error!("Failed to connect to Docker: {:?}", e);
+            std::process::exit(1)
         }
     }
 }
