@@ -126,15 +126,18 @@ class Runner:
                 blocking = True
 
             except JobFailure as exp:
-                # A manually triggered failure condition, intentionally done by the module developer:
+                # A manually triggered failure condition, intentionally done by the module developer.
+                # Considered a recoverable error.
                 message = "Job {0} failed: {1}".format(job_id, exp)
                 self.log_error(message)
                 self.__fail_job(job_id)
+
             except Exception as exp:
                 # An unexpected failure from the module
                 message = "Unexpected handler exception: type: {0} contents: {1}".format(type(exp), exp)
                 self.log_error(message)
                 self.__fail_job(job_id)
+                break
 
     def __fail_job(self, job_id):
         message = {"job_id": job_id, "success": False}
