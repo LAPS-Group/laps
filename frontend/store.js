@@ -5,7 +5,7 @@ export const store = Vue.observable({
   recivedCoordinates: { test: "noe" },
   selected_algorithms: [],
   job_token: null,
-  map_id: null
+  map_id: null,
 });
 //function to update a variable
 export const mutations = {
@@ -23,5 +23,5 @@ export const mutations = {
   },
   setmap_id(map_id) {
     store.map_id = map_id;
-  }
+  },
 };

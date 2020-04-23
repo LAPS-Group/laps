@@ -2,7 +2,7 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 const path = require("path");
 const VueLoaderPlugin = require("vue-loader/lib/plugin");
 
-module.exports = env => {
+module.exports = (env) => {
   let routeAlias;
   if (env.production) {
     console.log("Running in production mode");
@@ -16,7 +16,7 @@ module.exports = env => {
     entry: "./frontend/index.js",
     output: {
       filename: "main.js",
-      path: path.resolve(__dirname, "dist")
+      path: path.resolve(__dirname, "dist"),
     },
     devServer: {
       disableHostCheck: true,
@@ -26,26 +26,26 @@ module.exports = env => {
         "Access-Control-Allow-Methods":
           "GET, POST, PUT, DELETE, PATCH, OPTIONS",
         "Access-Control-Allow-Headers":
-          "X-Requested-With, content-type, Authorization"
-      }
+          "X-Requested-With, content-type, Authorization",
+      },
     },
     resolve: {
       alias: {
         vue$: "vue/dist/vue.esm.js",
         route: path.resolve(__dirname, routeAlias),
-        images: path.resolve(__dirname, "frontend/images")
-      }
+        images: path.resolve(__dirname, "frontend/images"),
+      },
     },
     module: {
       rules: [
         // ... other rules
         {
           test: /\.vue$/,
-          loader: "vue-loader"
+          loader: "vue-loader",
         },
         {
           test: /\.css$/,
-          use: ["vue-style-loader", "css-loader"]
+          use: ["vue-style-loader", "css-loader"],
         },
         {
           test: /\.(png|jpe?g|gif)$/i,
@@ -53,25 +53,25 @@ module.exports = env => {
           options: {
             outputPath: "images",
             publicPath: "images",
-            emitFile: true
-          }
+            emitFile: true,
+          },
         },
         {
           test: /\.scss$/,
-          use: ["vue-style-loader", "css-loader", "sass-loader"]
-        }
-      ]
+          use: ["vue-style-loader", "css-loader", "sass-loader"],
+        },
+      ],
     },
     plugins: [
       new VueLoaderPlugin(),
       new HtmlWebpackPlugin({
         filename: "index.html",
-        template: "frontend/index.html"
+        template: "frontend/index.html",
       }),
       new HtmlWebpackPlugin({
         filename: "admin.html",
-        template: "frontend/admin.html"
-      })
-    ]
+        template: "frontend/admin.html",
+      }),
+    ],
   };
 };

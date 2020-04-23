@@ -46,6 +46,7 @@ pub async fn get_maps(pool: State<'_, darkredis::ConnectionPool>) -> JsonValue {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::util;
     use rocket::{http::Status, local::Client};
     use serial_test::serial;
 

@@ -10,17 +10,17 @@ import header from "./components/Header.vue";
 //Calls send app, its sends coordinates
 new Vue({
   el: "#sendCords",
-  render: s => s(SendCords)
+  render: (s) => s(SendCords),
 });
 new Vue({
   el: "#getMap",
-  render: g => g(getMap)
+  render: (g) => g(getMap),
 });
 new Vue({
   el: "#getAlgorithm",
-  render: a => a(getAlgorithm)
+  render: (a) => a(getAlgorithm),
 });
 new Vue({
   el: "#header",
-  render: h => h(header)
+  render: (h) => h(header),
 });

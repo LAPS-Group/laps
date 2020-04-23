@@ -33,10 +33,10 @@ import { store, mutations } from "../store.js";
 export default {
   //defines components used
   components: {
-    DrawCordinates
+    DrawCordinates,
   },
 
-  data: function() {
+  data: function () {
     //defines variables in vue reactive element.
     return {
       pictureRecived: false,
@@ -44,17 +44,17 @@ export default {
       map_id: null,
       map_path: "/map/",
 
-      map_link: ""
+      map_link: "",
     };
   },
 
   methods: {
-    getMap: function() {
+    getMap: function () {
       this.map_link = getRoute(this.map_path + this.map_id);
       this.pictureRecived = true;
       console.log(this.map_link);
       mutations.setmap_id(this.map_id);
-    }
+    },
     //Fetch map by user ID
     /*fetchMap: async function() {
       //this.map = await axios.get(getRoute(this.map_path + this.map_id));
@@ -62,7 +62,7 @@ export default {
       //Sets that a map is recived and the render can be rendered
       this.pictureRecived = true;
     }*/
-  }
+  },
 };
 </script>
 <style>
