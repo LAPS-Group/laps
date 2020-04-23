@@ -10,7 +10,10 @@ jobs:
       - sudo apt-get update
       - sudo apt-get install -y libgdal-dev
       - export GDAL_STATIC=1
-    before_script: cargo install cargo-tarpaulin
+    before_script: |
+      if [ "$TRAVIS_BRANCH" != "staging" ]; then
+        cargo install cargo-tarpaulin
+      fi
     script:
       - bash ./build-test-data.sh
       - cargo build --workspace
@@ -19,8 +22,10 @@ jobs:
       - redis
       - docker
     after_success: |
-      cargo tarpaulin --out Xml
-      bash <(curl -s https://codecov.io/bash)
+      if [ "$TRAVIS_BRANCH" != "staging" ]; then
+        cargo tarpaulin --out Xml
+        bash <(curl -s https://codecov.io/bash)
+      fi
   - stage: test
     language: node_js
     node_js: 12.16
