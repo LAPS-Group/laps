@@ -547,7 +547,7 @@ async fn get_modules() {
     assert_eq!(response.status(), Status::Created);
 
     //Sleep for a bit to let the module start up, but more importantly yield control to the module handling task.
-    tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
+    tokio::time::delay_for(std::time::Duration::from_millis(300)).await;
 
     //Now ensure that they are both returned by the /module/all endpoint and that their states are correct:
     let mut response = client

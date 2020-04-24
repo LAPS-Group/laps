@@ -288,6 +288,7 @@ mod test {
 
     //Test that a module's queue is cancelled when it shuts down.
     #[tokio::test]
+    #[serial]
     async fn queue_cancellation() {
         //setup
         let pool = crate::create_redis_pool().await;
