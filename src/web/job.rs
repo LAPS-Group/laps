@@ -1,6 +1,6 @@
 use crate::{
     module_handling::ModuleInfo,
-    types::{BackendError, JobResult, Vector},
+    types::{BackendError, JobOutcome, JobResult, Vector},
     util,
 };
 use futures::TryStreamExt;
@@ -14,21 +14,34 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 //The job message which gets sent to a pathfinding module.
-#[derive(Serialize, Debug)]
-struct JobInfo {
-    job_id: i32,
-    start: Vector,
-    stop: Vector,
-    map_id: i32,
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct JobInfo {
+    pub job_id: i32,
+    pub start: Vector,
+    pub stop: Vector,
+    pub map_id: i32,
 }
 
 //A job request from the frontend.
 #[derive(Deserialize, Serialize)]
 pub struct JobSubmission {
-    start: Vector,
-    stop: Vector,
-    map_id: i32,
-    algorithm: ModuleInfo,
+    pub start: Vector,
+    pub stop: Vector,
+    pub map_id: i32,
+    pub algorithm: ModuleInfo,
+}
+
+impl JobSubmission {
+    //Return the job cache key for this submission, without any prefixes.
+    //Each field is written out explicitly such that each field has a defined ordering.
+    pub fn cache_key(&self) -> String {
+        let start_string = format!("({},{})", self.start.x, self.start.y);
+        let stop_string = format!("({},{})", self.start.x, self.start.y);
+        format!(
+            "{}.{}.{}.{}",
+            self.algorithm, self.map_id, start_string, stop_string
+        )
+    }
 }
 
 impl JobSubmission {
@@ -173,7 +186,7 @@ pub async fn submit(
         .await
         .expect("getting job id");
 
-    let key = util::get_module_key(&job.algorithm);
+    let key = util::get_module_work_key(&job.algorithm);
 
     let info = JobInfo {
         job_id: job_id as i32,
@@ -258,12 +271,9 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "status")]
 pub enum JobPoll {
     Ready { result: JobResult },
     Pending,
-    Error,
 }
 
 //Repeatedly try to get a job result using the system configuration.
@@ -282,12 +292,7 @@ pub async fn try_poll_job_result(redis: &mut darkredis::Connection, job_id: i32)
         //If we haven't gotten the result yet go to sleep for a bit. This does not block any threads
         //so this is a safe thing to do.
         if let Some(result) = result {
-            //Check if the job actually succeeded
-            if result.success {
-                return JobPoll::Ready { result };
-            } else {
-                return JobPoll::Error;
-            }
+            return JobPoll::Ready { result };
         } else {
             //zzz
             tokio::time::delay_for(poll_interval).await;
@@ -322,50 +327,61 @@ pub async fn result(
             //Poll for a result on this job
             let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
 
+            //Decrement the rate-limiting key.
+            conn.decr(&rate_limit_key).await?;
+
+            //See if the result is ready
             match try_poll_job_result(&mut conn, job_id).await {
                 JobPoll::Ready { result } => {
-                    //Decrement the rate-limiting key.
-                    conn.decr(&rate_limit_key).await?;
+                    let response = match result.outcome {
+                        JobOutcome::Success => {
+                            //Hide the job_id field from the user
+                            let json = Cursor::new(
+                                serde_json::json!({
+                                    "outcome": "success", "points": result.points
+                                })
+                                .to_string(),
+                            );
+                            Response::build()
+                                .status(Status::Ok)
+                                .header(ContentType::JSON)
+                                .sized_body(json)
+                                .await
+                                .finalize()
+                        }
+                        JobOutcome::Failure => Response::build()
+                            .status(Status::InternalServerError)
+                            .sized_body(Cursor::new(
+                                "A pathfinding module failed to complete this job!",
+                            ))
+                            .await
+                            .finalize(),
+                        JobOutcome::Cancelled => {
+                            let json = Cursor::new(
+                                serde_json::json!({
+                                    "outcome": "cancelled", "points": []
+                                })
+                                .to_string(),
+                            );
 
-                    //Cannot fail as it is the same value that gets deserialized in the results receiver
-                    //Hide the job_id field from the user
-                    let json =
-                        Cursor::new(serde_json::json!({"points": result.points}).to_string());
-                    let response = Response::build()
-                        .status(Status::Ok)
-                        .header(ContentType::JSON)
-                        .sized_body(json)
-                        .await
-                        .finalize();
+                            Response::build()
+                                .status(Status::Ok)
+                                .header(ContentType::JSON)
+                                .sized_body(json)
+                                .await
+                                .finalize()
+                        }
+                    };
 
                     Ok(response)
                 }
                 //Something went wrong in the pathfinding module.
-                JobPoll::Error => {
-                    conn.decr(rate_limit_key).await.unwrap();
-                    Ok(Response::build()
-                        .status(Status::InternalServerError)
-                        .sized_body(Cursor::new(
-                            "A pathfinding module failed to complete this job!",
-                        ))
-                        .await
-                        .finalize())
-                }
                 //Not ready yet
-                JobPoll::Pending => {
-                    conn.decr(rate_limit_key).await.unwrap();
-                    Ok(Response::build().status(Status::NoContent).finalize())
-                }
+                JobPoll::Pending => Ok(Response::build().status(Status::NoContent).finalize()),
             }
         }
-        Ok(None) => {
-            conn.decr(rate_limit_key).await.unwrap();
-            Ok(Response::build().status(Status::NotFound).finalize())
-        }
-        Err(e) => {
-            conn.decr(rate_limit_key).await.unwrap();
-            Err(BackendError::Redis(e))
-        }
+        Ok(None) => Ok(Response::build().status(Status::NotFound).finalize()),
+        Err(e) => Err(BackendError::Redis(e)),
     }
 }
 
@@ -596,7 +612,7 @@ mod test {
         //Complete the job. Because we cleared the job id counter earlier, the job id is guaranteed to be 1.
         let job_id = 1;
         let info = JobResult {
-            success: true,
+            outcome: JobOutcome::Success,
             job_id,
             points: vec![Vector { x: 0, y: 0 }, Vector { x: 0, y: 0 }],
         };
@@ -617,7 +633,8 @@ mod test {
                 "points": [
                     { "x": 0, "y": 0 },
                     { "x": 0, "y": 0 },
-                ]
+                ],
+                "outcome": "success"
             })
         );
     }

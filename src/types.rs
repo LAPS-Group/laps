@@ -14,13 +14,22 @@ pub struct Vector {
     pub y: u32,
 }
 
+//The outcome of a Job.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum JobOutcome {
+    Success,
+    Failure,
+    Cancelled,
+}
+
 //Struct for storing the ouptut of a pathfinding job.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobResult {
     //The ID of the job.
     pub job_id: i32,
-    //Whether the job succeeded.
-    pub success: bool,
+    //The outcome of this job
+    pub outcome: JobOutcome,
     //The list of points containing the path of the job.
     #[serde(default)]
     pub points: Vec<Vector>,

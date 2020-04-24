@@ -1,8 +1,13 @@
 use crate::{
-    types::{BackendError, JobResult},
-    util::{create_redis_backend_key, create_redis_key, get_job_key, get_module_log_key},
+    types::{BackendError, JobOutcome, JobResult},
+    util::{
+        create_redis_backend_key, create_redis_key, get_job_key, get_module_log_key,
+        get_module_work_key,
+    },
+    web::job::JobInfo,
 };
 use chrono::prelude::*;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -25,7 +30,51 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
 
         match shutdown {
             Ok(info) => {
-                info!("Module {} v{} shut down", info.name, info.version);
+                info!("Module {} shut down", info);
+
+                //Now that the module is shut down, cancel any job it may have queued up.
+                let work_key = get_module_work_key(&info);
+                let results_key = create_redis_backend_key("path-results");
+                let results: Vec<Vec<u8>> = conn
+                    .lrange(&work_key, 0, -1)
+                    .await
+                    .expect("getting module work queue")
+                    .into_iter()
+                    .map(|s| {
+                        let job = serde_json::from_slice::<JobInfo>(&s).unwrap();
+                        serde_json::to_vec(&JobResult {
+                            job_id: job.job_id,
+                            outcome: JobOutcome::Cancelled,
+                            points: Vec::new(),
+                        })
+                        .unwrap()
+                    })
+                    .collect();
+                if !results.is_empty() {
+                    conn.rpush_slice(&results_key, &results).await.unwrap();
+                }
+
+                info!("Cancelled {} jobs from {}'s job queue", results.len(), info);
+
+                //Also delete the entire job cache for the module, so that every new job submitted to the module will
+                //get rejected instead of giving a potentially confusing cancellation message every time.
+                let pattern = create_redis_backend_key(&format!("cache.{}.*", info)); //cache key always starts with the module info first.
+                let caches = conn
+                    .scan()
+                    .pattern(&pattern)
+                    .run()
+                    .collect::<Vec<Vec<u8>>>()
+                    .await;
+                if !caches.is_empty() {
+                    conn.del_slice(&caches)
+                        .await
+                        .expect("deleting cache entries");
+                }
+                info!(
+                    "Deleted {} cache entries which came from {}",
+                    caches.len(),
+                    info
+                );
 
                 //Remove from the registered_modules set.
                 //Rely on modules sending the exact same shutdown data as they sent registration data.
@@ -197,7 +246,13 @@ pub async fn get_registered_modules(
 
 #[cfg(test)]
 mod test {
-    use crate::util::create_redis_backend_key;
+    use super::ModuleInfo;
+    use crate::{
+        types::{JobOutcome, JobResult, Vector},
+        util::{create_redis_backend_key, get_job_cache_key, get_module_work_key},
+        web::job::{JobInfo, JobSubmission},
+    };
+    use futures::StreamExt;
     use serial_test::serial;
     use std::time::Duration;
     use tokio::time;
@@ -229,5 +284,92 @@ mod test {
             .unwrap();
         time::delay_for(Duration::from_millis(100)).await; //We have to yield to let the registration code run.
         assert!(!conn.sismember(&module_key, &module_info).await.unwrap());
+    }
+
+    //Test that a module's queue is cancelled when it shuts down.
+    #[tokio::test]
+    async fn queue_cancellation() {
+        //setup
+        let pool = crate::create_redis_pool().await;
+        let mut conn = pool.get().await;
+        crate::test::clear_redis(&mut conn).await;
+        crate::test::insert_test_mapdata(&mut conn).await;
+        tokio::spawn(super::unregister_loop(pool.clone())); //only run deregistration loop
+
+        //Make some fake module info. We only need to unregister it.
+        let module_info = ModuleInfo {
+            name: "mod".into(),
+            version: "ver".into(),
+        };
+
+        //How many jobs to submit for the test.
+        const JOB_COUNT: i32 = 5;
+
+        //Submit a bunch of jobs. It doesn't matter that they are all the same because the
+        //Input validation is done in the web code.
+        let work_key = get_module_work_key(&module_info);
+        let mut job = JobInfo {
+            start: Vector { x: 1, y: 1 },
+            map_id: 1,
+            job_id: 1,
+            stop: Vector { x: 2, y: 2 },
+        };
+        let mut jobs = Vec::new();
+        for i in 0..JOB_COUNT {
+            job.job_id = i;
+            jobs.push(serde_json::to_vec(&job).unwrap());
+        }
+        conn.lpush_slice(&work_key, &jobs).await.unwrap();
+
+        //Add a couple of dummy cache entries. It doesn't matter whether or not these are correct as long
+        //as the module is right, so just fill them with blank space.
+        for i in 0..JOB_COUNT {
+            job.job_id = i;
+            let submission = JobSubmission {
+                map_id: 1,
+                start: Vector { x: 1, y: 1 },
+                stop: Vector { x: 2, y: 2 },
+                algorithm: module_info.clone(),
+            };
+            let cache_key = get_job_cache_key(&submission);
+            conn.set(&cache_key, b"").await.unwrap();
+        }
+
+        //Now "shut down" the module.
+        conn.rpush(
+            create_redis_backend_key("module-shutdown"),
+            &serde_json::to_vec(&module_info).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        //Yield for a bit so that the shutdown can be processed
+        tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
+
+        //Check that each job was cancelled by verifying that the path results backlog is big enough.
+        let path_results_key = create_redis_backend_key("path-results");
+        assert_eq!(
+            conn.llen(&path_results_key).await.unwrap().unwrap(),
+            JOB_COUNT as isize
+        );
+        assert_eq!(
+            serde_json::from_slice::<JobResult>(
+                &conn.rpop(&path_results_key).await.unwrap().unwrap()
+            )
+            .unwrap()
+            .outcome,
+            JobOutcome::Cancelled
+        );
+
+        //Verify that there are no cache entries.
+        let pattern = create_redis_backend_key(&format!("cache.{}.*", module_info)); //cache key always starts with the module info first.
+        let caches = conn
+            .scan()
+            .pattern(&pattern)
+            .run()
+            .collect::<Vec<Vec<u8>>>()
+            .await;
+
+        assert!(caches.is_empty());
     }
 }

@@ -25,7 +25,7 @@ pub fn create_redis_backend_key(name: &str) -> String {
 }
 
 //Get the job queue key for `module`.
-pub fn get_module_key(module: &ModuleInfo) -> String {
+pub fn get_module_work_key(module: &ModuleInfo) -> String {
     let prefix = create_redis_key("runner");
     format!("{}.{}:{}.work", prefix, module.name, module.version)
 }
@@ -72,9 +72,6 @@ pub fn get_session_key(token: &str) -> String {
 //Get a job cache key
 pub fn get_job_cache_key(job: &JobSubmission) -> String {
     let prefix = create_redis_backend_key("cache");
-    //We want the order of a submission's fields to not matter, so re-serialize the job submisson. This ensures that
-    //the fields show up in the same order every time. This operation cannot fail, and is unlikely to cost much in terms
-    //of performance, though this has not been tested vs converting it to a string in other ways.
-    let submission_data = serde_json::to_string(&job).unwrap();
-    format!("{}.{}", prefix, submission_data)
+    //We want the key to have the same format every time
+    format!("{}.{}", prefix, job.cache_key())
 }

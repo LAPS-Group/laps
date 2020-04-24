@@ -115,7 +115,7 @@ class Runner:
                 # Send the result to the backend.
                 response = {
                     "job_id": job_id,
-                    "success": True,
+                    "outcome": "success",
                     "points": result
                 }
                 self.redis.lpush(
@@ -140,7 +140,7 @@ class Runner:
                 break
 
     def __fail_job(self, job_id):
-        message = {"job_id": job_id, "success": False}
+        message = {"job_id": job_id, "outcome": "failure"}
         self.redis.lpush(self.create_backend_redis_key("path-results"), json.dumps(message))
 
     def create_redis_key(self, name):
