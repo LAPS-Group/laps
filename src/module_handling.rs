@@ -132,7 +132,8 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
 
         //Expire after a given period if the result has not been retrieved by the user
         //TODO: Maybe set the mapping key timeout to match the result timeout
-        conn.set_and_expire_seconds(&key, &value, crate::CONFIG.jobs.result_timeout)
+        conn.lpush(&key, &value).await.unwrap();
+        conn.expire_seconds(&key, crate::CONFIG.jobs.result_timeout)
             .await
             .unwrap();
     }

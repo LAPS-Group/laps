@@ -215,13 +215,10 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
     let redis_conf = &crate::CONFIG.redis;
     info!("Creating result Redis pool at {}", redis_conf.address);
 
-    let job_conf = &crate::CONFIG.jobs;
-    //Use a couple more connections to be able to return 504 when completely congested
-    let connection_count = job_conf.max_polling_clients + job_conf.additional_connections;
     let pool = darkredis::ConnectionPool::create(
         redis_conf.address.clone(),
         redis_conf.password.as_deref(),
-        connection_count as usize,
+        crate::CONFIG.jobs.max_polling_clients as usize,
     )
     .await;
     match pool {
@@ -242,28 +239,26 @@ pub enum JobPoll {
 }
 
 //Repeatedly try to get a job result using the system configuration.
-pub async fn try_poll_job_result(redis: &mut darkredis::Connection, job_id: i32) -> JobPoll {
-    let times = crate::CONFIG.jobs.poll_times;
-    let poll_interval =
-        std::time::Duration::from_secs((crate::CONFIG.jobs.poll_timeout / times) as u64);
+pub async fn try_poll_job_result(
+    redis: &mut darkredis::Connection,
+    job_id: i32,
+) -> Result<JobPoll, BackendError> {
+    //BRPOPLPUSH keeps the expiry of a list even when there's just a single element in it, so use that to poll.
     let key = util::get_job_key(job_id);
-    for _ in 0..times {
-        let result = redis
-            .get(&key)
-            .await
-            .map(|s| s.map(|s| serde_json::from_slice::<JobResult>(&s).unwrap()))
-            .expect("getting job result");
+    let poll_timeout = crate::CONFIG.jobs.poll_timeout.to_string();
+    let command = darkredis::Command::new("BRPOPLPUSH")
+        .arg(&key)
+        .arg(&key)
+        .arg(&poll_timeout);
+    let result = redis.run_command(command).await?;
 
-        //If we haven't gotten the result yet go to sleep for a bit. This does not block any threads
-        //so this is a safe thing to do.
-        if let Some(result) = result {
-            return JobPoll::Ready { result };
-        } else {
-            //zzz
-            tokio::time::delay_for(poll_interval).await;
-        }
+    match result
+        .optional_string()
+        .map(|s| serde_json::from_slice::<JobResult>(&s).unwrap())
+    {
+        Some(result) => Ok(JobPoll::Ready { result }),
+        None => Ok(JobPoll::Pending),
     }
-    JobPoll::Pending
 }
 
 //Get the result of a pathfinding job
@@ -272,31 +267,19 @@ pub async fn result(
     pool: State<'_, ResultConnectionPool>,
     token: String,
 ) -> Result<Response<'_>, BackendError> {
+    //Because other clients may be polling at once, there's a possibility that acquiring this connection
+    //will take a while, but that's okay because it cannot take much longer than the poll timeout.
+    //This means that the theoretical maximum time this handler can take is just shy of 2*poll_timeout.
     let mut conn = pool.get().await;
 
-    //Rate limit the number of clients
-    //Is the number of clients too big?
-    let rate_limit_key = util::create_redis_backend_key("job_poll_ratelimiter");
-    //Is the number of polling clients too big?
-    if conn.incr(&rate_limit_key).await.unwrap() > crate::CONFIG.jobs.max_polling_clients as isize {
-        //Yes, send a 504
-        conn.decr(rate_limit_key).await.unwrap();
-        return Ok(Response::build()
-            .status(Status::ServiceUnavailable)
-            .finalize());
-    }
-
     let key = util::get_job_mapping_key(&token);
-    match conn.get(key).await {
-        Ok(Some(k)) => {
+    match conn.get(key).await? {
+        Some(k) => {
             //Poll for a result on this job
             let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
 
-            //Decrement the rate-limiting key.
-            conn.decr(&rate_limit_key).await?;
-
             //See if the result is ready
-            match try_poll_job_result(&mut conn, job_id).await {
+            match try_poll_job_result(&mut conn, job_id).await? {
                 JobPoll::Ready { result } => {
                     let response = match result.outcome {
                         JobOutcome::Success => {
@@ -340,13 +323,11 @@ pub async fn result(
 
                     Ok(response)
                 }
-                //Something went wrong in the pathfinding module.
                 //Not ready yet
                 JobPoll::Pending => Ok(Response::build().status(Status::NoContent).finalize()),
             }
         }
-        Ok(None) => Ok(Response::build().status(Status::NotFound).finalize()),
-        Err(e) => Err(BackendError::Redis(e)),
+        None => Ok(Response::build().status(Status::NotFound).finalize()),
     }
 }
 
@@ -582,7 +563,7 @@ mod test {
             points: vec![Vector { x: 0, y: 0 }, Vector { x: 0, y: 0 }],
         };
         let key = util::get_job_key(job_id);
-        conn.set(key, serde_json::to_vec(&info).unwrap())
+        conn.lpush(key, serde_json::to_vec(&info).unwrap())
             .await
             .unwrap();
 
@@ -602,39 +583,6 @@ mod test {
                 "outcome": "success"
             })
         );
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn rate_limiting() {
-        //setup
-        let redis_pool = crate::create_redis_pool().await;
-        let redis_result_pool = create_result_redis_pool().await;
-        let mut conn = redis_pool.get().await;
-        let rocket = rocket::ignite()
-            .mount("/", routes![result])
-            .manage(redis_result_pool)
-            .manage(redis_pool.clone());
-        let client = Client::new(rocket).unwrap();
-        crate::test::clear_redis(&mut conn).await;
-
-        //Simulate too many clients connecting at once
-        let max_clients = crate::CONFIG.jobs.max_polling_clients;
-        let rate_limit_key = create_redis_backend_key("job_poll_ratelimiter");
-        conn.set(&rate_limit_key, max_clients.to_string())
-            .await
-            .unwrap();
-
-        //Verify that it denies us. Token does not matter.
-        let response = client.get("/job/256").dispatch().await;
-        assert_eq!(response.status(), Status::ServiceUnavailable);
-
-        //Make room for another client
-        conn.decr(rate_limit_key).await.unwrap();
-
-        //Verify that we are now accepted but that there's no job with this token.
-        let response = client.get("/job/256").dispatch().await;
-        assert_eq!(response.status(), Status::NotFound);
     }
 
     //Test that we avoid unnecesarry calculations of the same job.
