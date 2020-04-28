@@ -665,12 +665,21 @@ async fn start_stop_module() {
     assert_eq!(response.status(), Status::Created);
     assert!(module_is_running(&docker, &module).await.unwrap());
 
-    //Kill it to clean up
+    //Kill it again
     let response = client
         .post(format!("/module/{}/{}/stop", module.name, module.version))
         .cookies(cookies.clone())
         .dispatch()
         .await;
     assert_eq!(response.status(), Status::NoContent);
+    assert!(!module_is_running(&docker, &module).await.unwrap());
+
+    //Try to kill a stopped module, which should fail
+    let response = client
+        .post(format!("/module/{}/{}/stop", module.name, module.version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
     assert!(!module_is_running(&docker, &module).await.unwrap());
 }

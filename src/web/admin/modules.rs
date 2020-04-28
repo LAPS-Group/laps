@@ -342,7 +342,6 @@ pub async fn restart_module(
             all: true,
             ..Default::default()
         };
-        dbg!(&container_name);
         let container_exists = docker
             .list_containers(Some(options))
             .await?
@@ -352,7 +351,6 @@ pub async fn restart_module(
                 //When we receive the container names from Docker, they all start with a `/` for some reason.
                 c.names.into_iter().any(|s| s.ends_with(&container_name))
             });
-        dbg!(&container_exists);
         if !container_exists {
             //No container has been created yet, build it from scratch
             debug!("Creating new container {}", container_name);
@@ -434,7 +432,7 @@ pub async fn stop_module(
     } else {
         //If the module isn't running, don't bother stopping it
         if !module_is_running(&docker, &module).await? {
-            Ok(Status::NotModified)
+            Ok(Status::BadRequest)
         } else {
             let options = StopContainerOptions { t: 60 };
             let container = module.to_string().replace(":", "-");
