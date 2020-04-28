@@ -19,6 +19,7 @@
     "vue-style-loader": "^4.1.2"
   },
   "devDependencies": {
+    "copy-webpack-plugin": "^5.1.1",
     "file-loader": "^6.0.0",
     "html-webpack-plugin": "^4.2.0",
     "node-sass": "^4.13.1",

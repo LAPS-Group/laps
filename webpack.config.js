@@ -1,4 +1,5 @@
 const HtmlWebpackPlugin = require("html-webpack-plugin");
+const CopyWebpackPlugin = require("copy-webpack-plugin");
 const path = require("path");
 const VueLoaderPlugin = require("vue-loader/lib/plugin");
 
@@ -13,9 +14,13 @@ module.exports = (env) => {
   }
 
   return {
-    entry: "./frontend/index.js",
+    entry: {
+      index: "./frontend/index.js",
+      admin: "./frontend/admin.js",
+      login: "./frontend/login.js",
+    },
     output: {
-      filename: "main.js",
+      filename: "[name].js",
       path: path.resolve(__dirname, "dist"),
     },
     devServer: {
@@ -64,13 +69,26 @@ module.exports = (env) => {
     },
     plugins: [
       new VueLoaderPlugin(),
+      // new CopyWebpackPlugin([
+      //   { from: "frontend/*.html", flatten: true },
+      // ]),
       new HtmlWebpackPlugin({
         filename: "index.html",
         template: "frontend/index.html",
+        inject: false,
+        chunks: ["index"],
       }),
       new HtmlWebpackPlugin({
         filename: "admin.html",
         template: "frontend/admin.html",
+        inject: false,
+        chunks: ["admin"],
+      }),
+      new HtmlWebpackPlugin({
+        filename: "login.html",
+        template: "frontend/login.html",
+        inject: false,
+        chunks: ["login"],
       }),
     ],
   };

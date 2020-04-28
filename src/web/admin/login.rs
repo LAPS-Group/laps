@@ -6,9 +6,20 @@ use rand::RngCore;
 use rocket::{
     http::{Cookie, Cookies, SameSite, Status},
     request::{Form, State},
+    response::NamedFile,
     Response,
 };
 use std::io::Cursor;
+
+//Index stuff
+#[get("/login")]
+pub fn login_index() -> Option<NamedFile> {
+    NamedFile::open("dist/login.html").ok()
+}
+#[get("/login.js")]
+pub fn login_index_js() -> Option<NamedFile> {
+    NamedFile::open("dist/login.js").ok()
+}
 
 #[derive(FromForm)]
 pub struct AdminLogin {

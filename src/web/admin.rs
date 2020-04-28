@@ -21,6 +21,10 @@ pub mod test;
 pub async fn index(_session: AdminSession) -> Option<NamedFile> {
     NamedFile::open("dist/admin.html").ok()
 }
+#[get("/admin.js")]
+pub fn index_js() -> Option<NamedFile> {
+    NamedFile::open("dist/admin.js").ok()
+}
 
 #[get("/admin/me")]
 pub async fn get_me(session: AdminSession) -> Json<AdminSession> {

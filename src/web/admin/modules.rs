@@ -246,9 +246,11 @@ pub async fn upload_module(
         .ok_or_else(|| UserError::BadForm("Expected module with type application/x-tar".into()))?;
 
     //Validation
-    //Check the name
-    if name.chars().any(|c| c == ':') {
-        return Err(UserError::BadForm("Name cannot have ':' in it".into()));
+    //Check the name and version for invalid characters
+    if name.chars().any(|c| c == ':') || version.chars().any(|c| c == ':') {
+        return Err(UserError::BadForm(
+            "Neither name nor version cannot contain ':'".into(),
+        ));
     }
 
     //Check that there's no image with the same name and version currently

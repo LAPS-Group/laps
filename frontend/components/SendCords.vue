@@ -3,7 +3,7 @@
     <!-- Creates 4 inputs field for coordinates, displays first 2 coordinates recived-->
     Start X <br /><input v-model="coordinates.start.x" /><br />
     Start Y <br /><input v-model="coordinates.start.y" /><br />
-    End X <br /><input v-model="coordinates.stop.x" /> <br />
+    Ed X <br /><input v-model="coordinates.stop.x" /> <br />
     End Y <br />
     <input v-model="coordinates.stop.y" /> <br />
 
@@ -118,7 +118,7 @@ export default {
         mutations.setrecivedCoordinates(c.data);
       } catch (error) {
         console.log(error);
-        if ((error = 504)) {
+        if (error == 504) {
           console.log("504:timed out sending new request");
           this.send_job_token();
         }

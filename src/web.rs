@@ -13,14 +13,15 @@ mod map;
 mod mime_consts;
 mod multipart;
 
-//End points for getting the frontend code
+//Index stuff
 #[get("/")]
 fn index() -> Option<NamedFile> {
     NamedFile::open("dist/index.html").ok()
 }
-#[get("/main.js")]
-fn dist() -> Option<NamedFile> {
-    NamedFile::open("dist/main.js").ok()
+
+#[get("/index.js")]
+fn index_js() -> Option<NamedFile> {
+    NamedFile::open("dist/index.js").ok()
 }
 
 //Launch the rocket instance
@@ -43,7 +44,10 @@ pub async fn run() {
                 admin::get_me,
                 admin::get_module_logs,
                 admin::index,
+                admin::index_js,
                 admin::login,
+                admin::login_index,
+                admin::login_index_js,
                 admin::new_map,
                 admin::register_admin,
                 admin::register_super_admin,
@@ -51,8 +55,8 @@ pub async fn run() {
                 admin::stop_module,
                 admin::upload_module,
                 algorithms::list,
-                dist,
                 index,
+                index_js,
                 job::result,
                 job::submit,
                 map::get_map,
