@@ -21,7 +21,7 @@ export default {
   computed: {
     tester() {
       return store.tester;
-    },
+    }
   },
   data: function() {
     return {
@@ -32,24 +32,24 @@ export default {
         map_id: null,
         algorithm: {
           name: null,
-          version: null,
-        },
+          version: null
+        }
       },
       job_token: {},
       display: {
         data: {
-          points: [],
-        },
+          points: []
+        }
       },
       messageSent: false,
-      map_id: null,
+      map_id: null
     };
   },
 
   computed: {
     selected_algorithms() {
       return store.selected_algorithms;
-    },
+    }
   },
   methods: {
     submitPoints: async function() {
@@ -73,8 +73,8 @@ export default {
       //Start the job based on sent information and returns id to fetch result when done
       let res = await axios.post(getRoute("/job"), message, {
         headers: {
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       });
 
       //Stores job token in store
@@ -97,8 +97,8 @@ export default {
           this.getJobResult();
         }
       }
-    },
-  },
+    }
+  }
 };
 </script>
 <style>

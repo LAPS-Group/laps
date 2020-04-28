@@ -4,7 +4,6 @@ import getMap from "./components/GetMap.vue";
 import getAlgorithm from "./components/GetAlgorithm.vue";
 import header from "./components/Header.vue";
 
-
 //Calls send app, its sends coordinates
 new Vue({
   el: "#sendCords",
@@ -21,4 +20,4 @@ new Vue({
 new Vue({
   el: "#header",
   render: h => h(header)
-}); 
+});
