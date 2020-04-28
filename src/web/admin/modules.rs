@@ -49,18 +49,13 @@ pub async fn get_module_logs<'a>(
                     out
                 });
 
-        //If empty return 204 no content
-        if out.is_empty() {
-            Ok(Response::build().status(Status::NoContent).finalize())
-        } else {
-            let cursor = Cursor::new(out);
-            Ok(Response::build()
-                .status(Status::Ok)
-                .header(ContentType::Plain)
-                .sized_body(cursor)
-                .await
-                .finalize())
-        }
+        let cursor = Cursor::new(out);
+        Ok(Response::build()
+            .status(Status::Ok)
+            .header(ContentType::Plain)
+            .sized_body(cursor)
+            .await
+            .finalize())
     } else {
         Ok(Response::build().status(Status::NotFound).finalize())
     }
@@ -128,12 +123,10 @@ pub async fn module_exists(docker: &Docker, module: &ModuleInfo) -> Result<bool,
     //Figure out if module with name `name` and version `version` is in that list.
     Ok(images.into_iter().any(|i| {
         //We are are guaranteed to have a version if repo_tags is Some.
-        if let Some(m) = i.repo_tags.map(|s| {
-            s.last()
-                .map(|l| extract_module_info_from_tag(l).unwrap())
-                .unwrap()
-        }) {
-            module == &m
+        if let Some(t) = i.repo_tags {
+            t.into_iter()
+                .map(|s| extract_module_info_from_tag(&s).unwrap())
+                .any(|s| &s == module)
         } else {
             false
         }
@@ -190,23 +183,25 @@ pub async fn get_all_modules(
 
     let mut out = Vec::new();
     for image in images {
-        //The repo_tags field will always have at least one element in it if it's `Some`.
-        if let Some(tag) = image.repo_tags.map(|mut t| t.pop().unwrap()) {
-            //A valid tag created by the backend will always have a version.
-            let module = extract_module_info_from_tag(&tag).unwrap();
+        //For each tag, grab the module information so that we display all modules, even those with identical images.
+        if let Some(tags) = image.repo_tags {
+            for tag in tags {
+                //A valid tag created by the backend will always have a version.
+                let module = extract_module_info_from_tag(&tag).unwrap();
 
-            //Look for a container associated with this image.
-            let state = match all_modules.iter().find(|(m, _)| m == &module) {
-                Some((_, container)) => {
-                    //Found a container. Check it's state to return the proper status.
-                    get_container_state(&container)
-                }
-                //If there's no container associated with the image, it simply hasn't been created yet,
-                //and we can just say that it's stopped.
-                None => ModuleState::Stopped,
-            };
+                //Look for a container associated with this image.
+                let state = match all_modules.iter().find(|(m, _)| m == &module) {
+                    Some((_, container)) => {
+                        //Found a container. Check it's state to return the proper status.
+                        get_container_state(&container)
+                    }
+                    //If there's no container associated with the image, it simply hasn't been created yet,
+                    //and we can just say that it's stopped.
+                    None => ModuleState::Stopped,
+                };
 
-            out.push(PathModule { state, module });
+                out.push(PathModule { state, module });
+            }
         }
     }
     Ok(Json(out))
@@ -254,7 +249,11 @@ pub async fn upload_module(
     }
 
     //Check that there's no image with the same name and version currently
-    let info = ModuleInfo { name, version };
+    //Docker only accepts lowercase names so do that automatically.
+    let info = ModuleInfo {
+        name: name.to_lowercase(),
+        version: version.to_lowercase(),
+    };
     if module_exists(&docker, &info).await? {
         return Err(UserError::ModuleImport("Module already exists".into()));
     }
@@ -349,7 +348,6 @@ pub async fn restart_module(
             .await?
             .into_iter()
             .any(|c| {
-                dbg!(&c.names);
                 //When we receive the container names from Docker, they all start with a `/` for some reason.
                 c.names.into_iter().any(|s| s.ends_with(&container_name))
             });
