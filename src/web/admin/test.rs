@@ -395,12 +395,13 @@ async fn module_logs() {
     assert_eq!(response.status(), Status::Created);
 
     //Get the module logs again, this time it should exist but be empty:
-    let response = client
+    let mut response = client
         .get(format!("/module/{}/{}/logs", name, version))
         .cookies(cookies.clone())
         .dispatch()
         .await;
-    assert_eq!(response.status(), Status::NoContent);
+    assert_eq!(response.status(), Status::Ok);
+    assert!(response.body_string().await.unwrap().is_empty());
 
     //Start up the test module
     let response = client
