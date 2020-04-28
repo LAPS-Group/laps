@@ -21,7 +21,7 @@ export default {
   computed: {
     tester() {
       return store.tester;
-    }
+    },
   },
   data: function() {
     return {
@@ -32,24 +32,24 @@ export default {
         map_id: null,
         algorithm: {
           name: null,
-          version: null
-        }
+          version: null,
+        },
       },
       job_token: {},
       display: {
         data: {
-          points: []
-        }
+          points: [],
+        },
       },
       messageSent: false,
-      map_id: null
+      map_id: null,
     };
   },
 
   computed: {
     selected_algorithms() {
       return store.selected_algorithms;
-    }
+    },
   },
   methods: {
     submitPoints: async function() {
@@ -73,8 +73,8 @@ export default {
       //Start the job based on sent information and returns id to fetch result when done
       let res = await axios.post(getRoute("/job"), message, {
         headers: {
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       });
 
       //Stores job token in store
@@ -82,24 +82,23 @@ export default {
       mutations.setjob_token(this.job_token);
 
       // Send the jobtoken, if the job is done return the result of the job, if not send a new request when the last times out.
-      this.send_job_token();
+      this.getJobResult();
     },
-    send_job_token: async function() {
+    getJobResult: async function() {
       try {
         const c = await axios.get(getRoute("/job/" + this.job_token));
         console.log("Job Done");
-        console.log(JSON.parse(JSON.stringify(c.data)));
         mutations.setrecivedCoordinates(c.data);
       } catch (error) {
         console.log(error);
         //If the error is a time out send a new request
         if ((error = 504)) {
           console.log("504:timed out sending new request");
-          this.send_job_token();
+          this.getJobResult();
         }
       }
-    }
-  }
+    },
+  },
 };
 </script>
 <style>
