@@ -326,7 +326,7 @@ pub async fn restart_module(
         return Ok(Status::NotFound);
     }
 
-    //If the module is already running, use the restart_container
+    //If the module is already running, use the restart_container method
     let container_name = module.to_string().replace(":", "-");
     if module_is_running(&docker, &module).await? {
         //Give the module 30s to shut down
@@ -337,62 +337,78 @@ pub async fn restart_module(
         info!("{} restarted module {}", session.username, &module);
         Ok(Status::NoContent)
     } else {
-        //If not, start it up for the first time
-        let redis = &crate::CONFIG.redis.address;
-        //For Redis to succeed in connecting the format of the address field must be <host>:<port>
-        let split = redis.find(':').unwrap();
-        let redis_host = &redis[..split];
-        let redis_port = &redis[split + 1..];
-
-        //Run it with a default set of commands
-        let mut command = vec![
-            "python3",
-            "main.py",
-            &module.name,
-            &module.version,
-            "--redis_host",
-            redis_host,
-            "--port",
-            redis_port,
-        ];
-        //Use test keys in laps.py if running in test mode
-        if cfg!(test) {
-            command.push("--test");
-        }
-
-        //Setup the settings
-        let module_name = module.to_string();
-        let host_config = HostConfig {
-            network_mode: Some("host"),
+        //If a container has already been created for the module, do not create a container with the same name again.
+        let options = ListContainersOptions::<String> {
+            all: true,
             ..Default::default()
         };
-        let config = Config {
-            image: Some(module_name.as_str()),
-            cmd: Some(command),
-            host_config: Some(host_config),
-            stop_signal: Some("SIGINT"),
-            ..Default::default()
-        };
-        let options = CreateContainerOptions {
-            name: &container_name,
-        };
-        //Print any warnings
-        let result = docker.create_container(Some(options), config).await?;
-        debug!(
-            "Successfully created container with name {}:{}",
-            container_name, result.id
-        );
-        let id = &result.id;
-        if let Some(w) = result.warnings {
-            w.into_iter().for_each(|w| warn!("Container {}: {}", id, w));
+        dbg!(&container_name);
+        let container_exists = docker
+            .list_containers(Some(options))
+            .await?
+            .into_iter()
+            .any(|c| {
+                dbg!(&c.names);
+                //When we receive the container names from Docker, they all start with a `/` for some reason.
+                c.names.into_iter().any(|s| s.ends_with(&container_name))
+            });
+        dbg!(&container_exists);
+        if !container_exists {
+            //No container has been created yet, build it from scratch
+            debug!("Creating new container {}", container_name);
+            let redis = &crate::CONFIG.redis.address;
+            //For Redis to succeed in connecting the format of the address field must be <host>:<port>
+            let split = redis.find(':').unwrap();
+            let redis_host = &redis[..split];
+            let redis_port = &redis[split + 1..];
+
+            //Run it with a default set of commands
+            let mut command = vec![
+                "python3",
+                "main.py",
+                &module.name,
+                &module.version,
+                "--redis_host",
+                redis_host,
+                "--port",
+                redis_port,
+            ];
+            //Use test keys in laps.py if running in test mode
+            if cfg!(test) {
+                command.push("--test");
+            }
+
+            //Setup the settings
+            let module_name = module.to_string();
+            let host_config = HostConfig {
+                network_mode: Some("host"),
+                ..Default::default()
+            };
+            let config = Config {
+                image: Some(module_name.as_str()),
+                cmd: Some(command),
+                host_config: Some(host_config),
+                stop_signal: Some("SIGINT"),
+                ..Default::default()
+            };
+            let options = CreateContainerOptions {
+                name: &container_name,
+            };
+            //Print any warnings
+            let result = docker.create_container(Some(options), config).await?;
+            debug!(
+                "Successfully created container with name {}:{}",
+                container_name, result.id
+            );
+            let id = &result.id;
+            if let Some(w) = result.warnings {
+                w.into_iter().for_each(|w| warn!("Container {}: {}", id, w));
+            }
         }
 
         //Fire this sucker up~
         docker
-            .start_container(
-                &module.to_string().replace(":", "-"),
-                None::<StartContainerOptions<String>>,
-            )
+            .start_container(&container_name, None::<StartContainerOptions<String>>)
             .await?;
 
         info!(
