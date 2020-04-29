@@ -3,7 +3,11 @@
     <h2>Upload new map</h2>
     <label
       >GeoTiff file:
-      <input type="file" ref="file" v-on:change="handleFileUpload()"
+      <input
+        type="file"
+        ref="file"
+        accept="image/tiff"
+        v-on:change="handleFileUpload()"
     /></label>
     <button v-on:click="submit()">Submit</button>
   </div>
@@ -47,8 +51,7 @@ export default {
           alert("Successfully uploaded map " + res.data);
         })
         .catch(function (err) {
-          console.log(err);
-          alert("Failed to upload map: " + err.data);
+          alert("Failed to upload map: " + err.response.data);
         });
     },
   },

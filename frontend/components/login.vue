@@ -43,7 +43,7 @@ export default {
             window.location.href = "admin";
           })
           .catch(function (err) {
-            alert("Login failed " + err);
+            alert("Login failed");
           });
       } else {
         alert("Please type in your username and password.");
