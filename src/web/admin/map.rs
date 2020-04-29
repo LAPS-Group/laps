@@ -56,7 +56,7 @@ pub async fn new_map(
 
     //Put the map into a temporary file. This is needed because GDAL does not allow us to give it a buffer, it has
     //to be put into some sort of file, which is reflected in the laps_convert API.
-    //Using blocking IO for this because it is a literally a thousand times faster than tokio::fs::File.
+    //Using blocking IO for this because it is literally a thousand times faster than tokio::fs::File.
     let (image, metadata) =
         tokio::task::spawn_blocking(move || {
             match tempfile::NamedTempFile::new()

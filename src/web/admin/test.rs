@@ -337,7 +337,7 @@ async fn login() {
             .username,
         username
     );
-    //Login again, but this time using all uppercase letters
+    //Login again, but this time make the entire username uppercase:
     let form = format!("username={}&password={}", username.to_uppercase(), password);
     let response = client
         .post("/login")

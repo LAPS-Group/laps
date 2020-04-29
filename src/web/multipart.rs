@@ -145,7 +145,6 @@ impl FromDataSimple for MultipartForm {
             //Extract the data
             let mut files = HashMap::new();
             let mut text = HashMap::new();
-            //If any errors occur, put them here
 
             //Unwrapping here is okay because we are reading directly from memory, and it therefore should never fail.
             while let Some(mut entry) = form.read_entry().expect("reading from memory") {
