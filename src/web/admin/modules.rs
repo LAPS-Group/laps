@@ -224,26 +224,16 @@ pub async fn upload_module(
     ));
 
     //Get the required fields out of the form.
-    let name = form
-        .get_text("name")
-        .ok_or_else(|| UserError::BadForm("Missing name".into()))?
-        .trim()
-        .to_string();
-    let version = form
-        .get_text("version")
-        .ok_or_else(|| UserError::BadForm("Missing version".into()))?
-        .trim()
-        .to_string();
+    let name = form.get_text("name")?.trim().to_string();
+    let version = form.get_text("version")?.trim().to_string();
 
     //Accept only .tar
-    let module = form
-        .get_file(&mime_consts::X_TAR, "module")
-        .ok_or_else(|| UserError::BadForm("Expected module with type application/x-tar".into()))?;
+    let module = form.get_file(&mime_consts::X_TAR, "module")?;
 
     //Validation
     //Check the name and version for invalid characters
     if name.chars().any(|c| c == ':') || version.chars().any(|c| c == ':') {
-        return Err(UserError::BadForm(
+        return Err(UserError::ModuleImport(
             "Neither name nor version cannot contain ':'".into(),
         ));
     }

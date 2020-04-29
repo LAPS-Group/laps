@@ -20,21 +20,62 @@ pub struct MultipartForm {
     text: HashMap<String, String>,
 }
 
+quick_error::quick_error! {
+    #[derive(Debug)]
+    pub enum FormError {
+        //Would borrow here but quick_error doesn't support generic types
+        //The mime type for the field was incorrect.
+        BadMime(field: String, got: String, expected: Mime) {
+            display("Invalid MIME type for field '{}', expected '{}', got '{}'", field, expected, got)
+        }
+        //A file field was missing
+        MissingFileField(field: String, mime: Mime) {
+            display("Expected field '{}' with MIME type '{}'", field, mime)
+        }
+        //A text field was missing
+        MissingText(field: String) {
+            display("Missing text field '{}'", field)
+        }
+        //The Content-Type header of the request is not set properly
+        MissingContentType {
+            display("Invalid content type")
+        }
+        //The multipart form is missing a boundary
+        MissingBoundary {
+            display("Missing boundary")
+        }
+        //A field was given more than once
+        DuplicateFields(field: String) {
+            display("Duplicate field '{}'", field)
+        }
+        //A text field was not UTF-8
+        InvalidUtf8(field: String) {
+            display("Field '{}' is not valid UTF-8", field)
+        }
+    }
+}
+
 impl MultipartForm {
-    pub fn get_file(&mut self, mime: &Mime, field: &str) -> Option<Vec<u8>> {
+    pub fn get_file(&mut self, mime: &Mime, field: &str) -> Result<Vec<u8>, FormError> {
         if let Some(v) = self.files.get(field) {
             if &v.mime == mime {
-                Some(self.files.remove(field).unwrap().data)
+                Ok(self.files.remove(field).unwrap().data)
             } else {
-                None
+                Err(FormError::BadMime(
+                    field.to_owned(),
+                    v.mime.to_string(),
+                    mime.clone(),
+                ))
             }
         } else {
-            None
+            Err(FormError::MissingFileField(field.to_owned(), mime.clone()))
         }
     }
 
-    pub fn get_text(&mut self, field: &str) -> Option<String> {
-        self.text.remove(field)
+    pub fn get_text(&mut self, field: &str) -> Result<String, FormError> {
+        self.text
+            .remove(field)
+            .ok_or_else(|| FormError::MissingText(field.to_owned()))
     }
 }
 
@@ -55,7 +96,7 @@ impl FromDataSimple for MultipartForm {
             return Box::pin(async move {
                 Outcome::Failure((
                     Status::BadRequest,
-                    UserError::BadForm("Missing Content-Type".to_string()),
+                    UserError::BadForm(FormError::MissingContentType),
                 ))
             });
         };
@@ -77,7 +118,7 @@ impl FromDataSimple for MultipartForm {
             return Box::pin(async move {
                 Outcome::Failure((
                     Status::BadRequest,
-                    UserError::BadForm("Missing boundary".into()),
+                    UserError::BadForm(FormError::MissingBoundary),
                 ))
             });
         }
@@ -113,7 +154,7 @@ impl FromDataSimple for MultipartForm {
                     trace!("Received duplicate data");
                     return Outcome::Failure((
                         Status::BadRequest,
-                        UserError::BadForm("Form has duplicate fields".into()),
+                        UserError::BadForm(FormError::DuplicateFields(name)),
                     ));
                 }
 
@@ -130,7 +171,7 @@ impl FromDataSimple for MultipartForm {
                             trace!("Received invalid UTF-8: {}", e);
                             return Outcome::Failure((
                                 Status::BadRequest,
-                                UserError::BadForm(format!("Field {} is not valid UTF-8", name)),
+                                UserError::BadForm(FormError::InvalidUtf8(name)),
                             ));
                         }
                     };
@@ -147,7 +188,7 @@ impl FromDataSimple for MultipartForm {
                 } else {
                     return Outcome::Failure((
                         Status::BadRequest,
-                        UserError::BadForm(format!("Missing content-type for field {}", name)),
+                        UserError::BadForm(FormError::MissingContentType),
                     ));
                 }
             }

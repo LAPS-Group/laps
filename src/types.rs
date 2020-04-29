@@ -1,3 +1,4 @@
+use crate::web::multipart::FormError;
 use rocket::{
     http::Status,
     request::Request,
@@ -89,8 +90,9 @@ quick_error::quick_error! {
         BadType(got: String, allowed: String) {
             display("Invalid type \"{}\", expected one of {}", got, allowed)
         }
-        BadForm(details: String) {
-            display("Invalid form data: {}", details)
+        BadForm(err: FormError) {
+            from()
+            display("Invalid form data: {}", err)
         }
         MapConvert(err: laps_convert::ConvertError) {
             from()

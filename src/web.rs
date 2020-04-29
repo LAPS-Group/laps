@@ -11,7 +11,7 @@ mod algorithms;
 pub mod job;
 mod map;
 mod mime_consts;
-mod multipart;
+pub mod multipart;
 
 //Index stuff
 #[get("/")]

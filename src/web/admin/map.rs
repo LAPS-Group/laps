@@ -47,9 +47,7 @@ pub async fn new_map(
     session: AdminSession,
 ) -> Result<Json<u32>, UserError> {
     let mut conn = pool.get().await;
-    let data = upload
-        .get_file(&mime_consts::IMAGE_TIFF, "data")
-        .ok_or_else(|| UserError::BadForm("Missing `data` field".into()))?;
+    let data = upload.get_file(&mime_consts::IMAGE_TIFF, "data")?;
 
     //Do a quick and dirty check that the file has the TIF image header
     if !has_valid_tiff_header(&data) {
