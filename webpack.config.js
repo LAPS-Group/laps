@@ -69,9 +69,6 @@ module.exports = (env) => {
     },
     plugins: [
       new VueLoaderPlugin(),
-      // new CopyWebpackPlugin([
-      //   { from: "frontend/*.html", flatten: true },
-      // ]),
       new HtmlWebpackPlugin({
         filename: "index.html",
         template: "frontend/index.html",
