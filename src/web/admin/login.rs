@@ -6,16 +6,24 @@ use rand::RngCore;
 use rocket::{
     http::{Cookie, Cookies, SameSite, Status},
     request::{Form, State},
-    response::NamedFile,
+    response::{NamedFile, Redirect},
     Response,
 };
 use std::io::Cursor;
 
 //Index stuff
-#[get("/login")]
+#[get("/login", rank = 2)]
 pub fn login_index() -> Option<NamedFile> {
     NamedFile::open("dist/login.html").ok()
 }
+
+//For when the user is logged in, but tries to log in anyway.
+//There's no reason to show them the login page again, so don't.
+#[get("/login", rank = 1)]
+pub fn login_with_session(_session: AdminSession) -> Redirect {
+    Redirect::to(uri!(super::index))
+}
+
 #[get("/login.js")]
 pub fn login_index_js() -> Option<NamedFile> {
     NamedFile::open("dist/login.js").ok()
@@ -27,7 +35,13 @@ pub struct AdminLogin {
     password: String,
 }
 
-#[post("/login", data = "<login>")]
+//There's no reason to allow a user to log in if they already are logged in.
+#[post("/login", data = "<_login>")]
+pub fn login_attempt_with_session(_login: Form<AdminLogin>, _session: AdminSession) -> Status {
+    Status::Forbidden
+}
+
+#[post("/login", data = "<login>", rank = 2)]
 pub async fn login(
     pool: State<'_, ConnectionPool>,
     login: Form<AdminLogin>,

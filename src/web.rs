@@ -48,6 +48,8 @@ pub async fn run() {
                 admin::login,
                 admin::login_index,
                 admin::login_index_js,
+                admin::login_with_session,
+                admin::login_attempt_with_session,
                 admin::new_map,
                 admin::register_admin,
                 admin::register_super_admin,
