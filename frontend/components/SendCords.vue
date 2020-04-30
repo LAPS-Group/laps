@@ -3,11 +3,18 @@
   <div id="sendCords">
     <!-- Creates 4 inputs field for coordinates, displays first 2 coordinates recived-->
 
-    Start X <br /><input v-model="coordinates.start.x" /><br />
-    Start Y <br /><input v-model="coordinates.start.y" /><br />
-    End X <br /><input v-model="coordinates.stop.x" /> <br />
-    End Y <br /><input v-model="coordinates.stop.y" /> <br />
-
+    Start X <br /><input
+      v-model="coordinates.start.x"
+      @change="fieldUpdated"
+    /><br />
+    Start Y <br /><input
+      v-model="coordinates.start.y"
+      @change="fieldUpdated"
+    /><br />
+    End X <br /><input v-model="coordinates.stop.x" @change="fieldUpdated" />
+    <br />
+    End Y <br /><input v-model="coordinates.stop.y" @change="fieldUpdated" />
+    <br />
     <button v-on:click="submitPoints">Send</button>
   </div>
 </template>
@@ -54,14 +61,17 @@ export default {
   methods: {
     submitPoints: async function() {
       //Convert inputs coords to ints
-      this.coordinates.start.x = parseInt(this.coordinates.start.x);
-      this.coordinates.start.y = parseInt(this.coordinates.start.y);
-      this.coordinates.stop.x = parseInt(this.coordinates.stop.x);
-      this.coordinates.stop.y = parseInt(this.coordinates.stop.y);
+
+      this.coordinates.start.x = parseInt(store.markers[0].x);
+      this.coordinates.start.y = parseInt(store.markers[0].y);
+      this.coordinates.stop.x = parseInt(store.markers[1].x);
+      this.coordinates.stop.y = parseInt(store.markers[1].y);
 
       // Gets the map from the store and converts it into an int
+
       this.coordinates.map_id = store.map_id;
       this.coordinates.map_id = parseInt(this.coordinates.map_id);
+
       // Gets the currently selected algorithm from the store
       this.coordinates.algorithm.name = store.selected_algorithms.name;
       this.coordinates.algorithm.version = store.selected_algorithms.version;
@@ -92,11 +102,19 @@ export default {
       } catch (error) {
         console.log(error);
         //If the error is a time out send a new request
-        if ((error = 504)) {
+        if (error == 504) {
           console.log("504:timed out sending new request");
           this.getJobResult();
         }
       }
+    },
+    fieldUpdated() {
+      mutations.setMarker(
+        this.coordinates.start.x,
+        this.coordinates.start.y,
+        0
+      );
+      mutations.setMarker(this.coordinates.stop.x, this.coordinates.stop.y, 1);
     }
   }
 };
