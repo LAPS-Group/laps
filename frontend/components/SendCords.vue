@@ -115,8 +115,8 @@ export default {
         0
       );
       mutations.setMarker(this.coordinates.stop.x, this.coordinates.stop.y, 1);
-    }
-  }
+    },
+  },
 };
 </script>
 <style>

@@ -25,7 +25,14 @@
 
       <div
         ref="map"
-        style="{align-items: flex-start; position: relative; float: left; left: 300px;}"
+        style="
+           {
+            align-items: flex-start;
+            position: relative;
+            float: left;
+            left: 300px;
+          }
+        "
       >
         <template v-if="displayM1 == true">
           <canvas
@@ -35,7 +42,7 @@
             v-bind:style="{
               left: x1 - 3 + 'px',
               top: y1 - 3 + 'px',
-              Zindex: 1
+              Zindex: 1,
             }"
           ></canvas>
         </template>
@@ -48,7 +55,7 @@
             v-bind:style="{
               left: x2 - 3 + 'px',
               top: y2 - 3 + 'px',
-              Zindex: 1
+              Zindex: 1,
             }"
           ></canvas>
         </template>
@@ -130,7 +137,7 @@ export default {
         this.selectedMarker = 0;
         this.displayM2 = true;
       }
-    }
+    },
   },
   mounted: async function () {
     //request for all available maps

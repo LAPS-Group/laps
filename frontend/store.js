@@ -9,8 +9,8 @@ export const store = Vue.observable({
   pictureRecived: false,
   markers: [
     { x: null, y: null },
-    { x: null, y: null }
-  ]
+    { x: null, y: null },
+  ],
 });
 //function to update a variable
 export const mutations = {
@@ -35,5 +35,5 @@ export const mutations = {
   setMarker(x, y, markerNumber) {
     store.markers[markerNumber].x = x;
     store.markers[markerNumber].y = y;
-  }
+  },
 };
