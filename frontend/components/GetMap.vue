@@ -2,6 +2,7 @@
   <div id="getMap">
     <!-- add an input field and adds it vue reactive elements-->
     <br />
+
     Select Map
     <br />
     <!-- creates a dropdown menu for maps -->
@@ -22,8 +23,38 @@
     <template v-if="pictureRecived == true"
       ><br />
 
-      <div class="map">
-        <div class="mapcontainer"><img :src="this.map_link" />--></div>
+      <div
+        ref="map"
+        style="{align-items: flex-start; position: relative; float: left; left: 300px;}"
+      >
+        <template v-if="displayM1 == true">
+          <canvas
+            id="marker1"
+            width="7"
+            height="7"
+            v-bind:style="{
+              left: x1 - 3 + 'px',
+              top: y1 - 3 + 'px',
+              Zindex: 1
+            }"
+          ></canvas>
+        </template>
+        <template v-if="displayM2 == true">
+          <canvas
+            id="marker2"
+            width="7"
+            height="7"
+            v-show="true"
+            v-bind:style="{
+              left: x2 - 3 + 'px',
+              top: y2 - 3 + 'px',
+              Zindex: 1
+            }"
+          ></canvas>
+        </template>
+        <div class="mapcontainer">
+          <img :src="this.map_link" v-on:click="placeMarker" />
+        </div>
         <!-- Calls the component DrawCords-->
         <draw-cordinates />
       </div>
@@ -45,12 +76,18 @@ export default {
   data: function () {
     //defines variables in vue reactive element.
     return {
+      x1: "10",
+      y1: "100",
+      x2: "1",
+      y2: "1",
+      displayM1: false,
+      displayM2: false,
       pictureRecived: false,
       map: null,
       map_id: null,
       map_path: "/map/",
       map_link: "",
-
+      selectedMarker: 0,
       mapMenuRender: false,
       mapList: null,
       options: [],
@@ -78,6 +115,22 @@ export default {
       mutations.setmap_id(this.mapList.data.maps[this.selected]);
       this.pictureRecived = true;
     },
+    placeMarker(event) {
+      var rect = event.target.getBoundingClientRect();
+      if (this.selectedMarker == 0) {
+        this.x1 = event.clientX - rect.x;
+        this.y1 = event.clientY - rect.y;
+        this.selectedMarker = 1;
+        this.displayM1 = true;
+        mutations.setMarker(this.x1, this.y1, 0);
+      } else if (this.selectedMarker == 1) {
+        this.x2 = event.clientX - rect.x;
+        this.y2 = event.clientY - rect.y;
+        mutations.setMarker(this.x2, this.y2, 1);
+        this.selectedMarker = 0;
+        this.displayM2 = true;
+      }
+    }
   },
   mounted: async function () {
     //request for all available maps
@@ -110,12 +163,13 @@ canvas {
   position: absolute;
   align-items: flex-start;
 }
+/*
 .map {
   align-items: flex-start;
   position: relative;
   float: left;
   left: 300px;
-}
+}*/
 .drop-down {
   display: block;
   /*font-size: 16px;
