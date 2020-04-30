@@ -152,6 +152,18 @@ async fn map_manipulation() {
     let response = request.dispatch().await;
     assert_eq!(response.status(), Status::NoContent);
 
+    //Check that the data is gone from Redis, as well as the metadata.
+    assert!(conn
+        .hget(util::create_redis_key("mapdata.image"), "2")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(conn
+        .hget(util::create_redis_key("mapdata.meta"), "2")
+        .await
+        .unwrap()
+        .is_none());
+
     //Try to delete it again and fail.
     let request = client.delete("/map/2").cookies(response_cookies);
     let response = request.dispatch().await;
@@ -325,7 +337,7 @@ async fn login() {
             .username,
         username
     );
-    //Login again, but this time using all uppercase letters
+    //Login again, but this time make the entire username uppercase:
     let form = format!("username={}&password={}", username.to_uppercase(), password);
     let response = client
         .post("/login")

@@ -1,5 +1,5 @@
 <template>
-  <div id="map">
+  <div id="moduleUploader">
     <h2>Upload new module</h2>
     <label
       >Module tape archive:
