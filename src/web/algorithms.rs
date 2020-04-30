@@ -14,11 +14,13 @@ pub async fn list(pool: State<'_, ConnectionPool>) -> Result<Json<Vec<ModuleInfo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::util::{self, create_redis_backend_key};
+    use crate::util::create_redis_backend_key;
     use rocket::{http::Status, local::Client};
+    use serial_test::serial;
 
     //Test the listing of algorithms
     #[tokio::test]
+    #[serial]
     async fn list() {
         //Setup rocket instance
         let redis = crate::create_redis_pool().await;
@@ -27,7 +29,7 @@ mod test {
             .manage(redis.clone());
         let client = Client::new(rocket).unwrap();
         let mut conn = redis.get().await;
-        util::clear_redis(&mut conn).await;
+        crate::test::clear_redis(&mut conn).await;
 
         //Macro to make this test easier to read
         macro_rules! check {

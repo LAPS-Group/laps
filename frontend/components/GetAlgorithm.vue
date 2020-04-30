@@ -19,20 +19,20 @@ import { store, mutations } from "../store.js";
 
 export default {
   components: {
-    VueDropdown
+    VueDropdown,
   },
-  data: function() {
+  data: function () {
     return {
       algorithms_arr: null,
       selected_algorithms: null,
       names_arr: [],
       algorithmsRender: false,
       selected: "placeholder",
-      options: []
+      options: [],
     };
   },
 
-  mounted: async function() {
+  mounted: async function () {
     //Sends a request for all available algorithms
     this.algorithms_arr = await axios.get(getRoute("/algorithms"));
     console.log(this.algorithmsRender);
@@ -51,8 +51,8 @@ export default {
   methods: {
     onChange(event) {
       mutations.setselected_algorithms(this.algorithms_arr.data[this.selected]);
-    }
-  }
+    },
+  },
 };
 </script>
 <style>
@@ -63,7 +63,7 @@ export default {
 #dropDown {
   position: absolute;
 }
-.drop-down {
+<<<<<<< HEAD .drop-down {
   width: 175px;
 }
 </style>

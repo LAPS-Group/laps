@@ -1,6 +1,6 @@
 <template>
   <div id="header">
-    <img :src="images.Laps" style="width:20%;height:20%;" />
+    <img :src="images.Laps" style="width: 20%; height: 20%;" />
     <br />
   </div>
 </template>
@@ -11,10 +11,10 @@ export default {
   data() {
     return {
       images: {
-        Laps: laps_logo
-      }
+        Laps: laps_logo,
+      },
     };
-  }
+  },
 };
 </script>
 <style>

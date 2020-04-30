@@ -17,9 +17,14 @@ result_timeout = 600
 # Timeout for how long a poll for a job result should be. A higher value is
 # probably better.
 poll_timeout = 120
-# The number of times a job should be polled during poll_timeout.
-poll_times = 120
 # The number of clients which can poll for a job result at once
 max_polling_clients = 256
-# The number of extra connections to use for the job polling connection pool, to allow sending a 504
-additional_connections = 2
+
+[login]
+# How long a session needs to be inactive for to expire in seconds.
+# The timeout is reset every time the session gets used.
+session_timeout = 3600
+#How long a password must be before it is accepted
+minimum_password_length = 8
+#A password cannot be longer than this.
+maximum_password_length = 128

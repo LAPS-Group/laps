@@ -39,10 +39,10 @@ import { store, mutations } from "../store.js";
 export default {
   //defines components used
   components: {
-    DrawCordinates
+    DrawCordinates,
   },
 
-  data: function() {
+  data: function () {
     //defines variables in vue reactive element.
     return {
       pictureRecived: false,
@@ -54,13 +54,13 @@ export default {
       mapMenuRender: false,
       mapList: null,
       options: [],
-      selected: "PLaceholder"
+      selected: "PLaceholder",
     };
   },
 
   methods: {
     // displays the map based on ID
-    getMap: function() {
+    getMap: function () {
       this.map_link = getRoute(this.map_path + this.map_id);
 
       // Is set to true so that, it doesn't try display maps without a map
@@ -77,9 +77,9 @@ export default {
       //send the map id to the store to be used by other places that needs it
       mutations.setmap_id(this.mapList.data.maps[this.selected]);
       this.pictureRecived = true;
-    }
+    },
   },
-  mounted: async function() {
+  mounted: async function () {
     //request for all available maps
     this.mapList = await axios.get(getRoute("/maps"));
     console.log(JSON.stringify(this.mapList.data.maps[0]));
@@ -89,7 +89,7 @@ export default {
       console.log(i);
     }
     this.mapMenuRender = true;
-  }
+  },
 };
 </script>
 <style>

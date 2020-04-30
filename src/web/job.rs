@@ -1,6 +1,6 @@
 use crate::{
     module_handling::ModuleInfo,
-    types::{BackendError, Vector},
+    types::{BackendError, JobOutcome, JobResult, Vector},
     util,
 };
 use futures::TryStreamExt;
@@ -14,21 +14,34 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 //The job message which gets sent to a pathfinding module.
-#[derive(Serialize, Debug)]
-struct JobInfo {
-    job_id: i32,
-    start: Vector,
-    stop: Vector,
-    map_id: i32,
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+pub struct JobInfo {
+    pub job_id: i32,
+    pub start: Vector,
+    pub stop: Vector,
+    pub map_id: i32,
 }
 
 //A job request from the frontend.
 #[derive(Deserialize, Serialize)]
 pub struct JobSubmission {
-    start: Vector,
-    stop: Vector,
-    map_id: i32,
-    algorithm: ModuleInfo,
+    pub start: Vector,
+    pub stop: Vector,
+    pub map_id: i32,
+    pub algorithm: ModuleInfo,
+}
+
+impl JobSubmission {
+    //Return the job cache key for this submission, without any prefixes.
+    //Each field is written out explicitly such that each field has a defined ordering.
+    pub fn cache_key(&self) -> String {
+        let start_string = format!("({},{})", self.start.x, self.start.y);
+        let stop_string = format!("({},{})", self.start.x, self.start.y);
+        format!(
+            "{}.{}.{}.{}",
+            self.algorithm, self.map_id, start_string, stop_string
+        )
+    }
 }
 
 impl JobSubmission {
@@ -48,7 +61,7 @@ impl JobSubmission {
             return Ok((false, "Module does not exist"));
         }
 
-        let mapdata_key = util::create_redis_key("mapdata");
+        let mapdata_key = util::create_redis_key("mapdata.image");
         //Check that the requested map actually exists.
         if let Some(data) = redis.hget(mapdata_key, self.map_id.to_string()).await? {
             //Verify that the job is within the bounds of the map
@@ -131,13 +144,14 @@ pub async fn submit(
             return Err(e);
         }
     }
+
     //TODO Find a random job id
     let job_id = conn
         .incr(util::create_redis_backend_key("job_id"))
         .await
         .expect("getting job id");
 
-    let key = util::get_module_key(&job.algorithm);
+    let key = util::get_module_work_key(&job.algorithm);
 
     let info = JobInfo {
         job_id: job_id as i32,
@@ -150,7 +164,7 @@ pub async fn submit(
         .await?;
 
     //Job submitted, now generate a token the user can use to get the result
-    let mut buffer = vec![0u8; 256];
+    let mut buffer = vec![0u8; 64];
     rand::thread_rng().fill_bytes(&mut buffer);
     let token = base64::encode_config(&buffer, base64::URL_SAFE_NO_PAD);
 
@@ -201,13 +215,10 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
     let redis_conf = &crate::CONFIG.redis;
     info!("Creating result Redis pool at {}", redis_conf.address);
 
-    let job_conf = &crate::CONFIG.jobs;
-    //Use a couple more connections to be able to return 504 when completely congested
-    let connection_count = job_conf.max_polling_clients + job_conf.additional_connections;
     let pool = darkredis::ConnectionPool::create(
         redis_conf.address.clone(),
         redis_conf.password.as_deref(),
-        connection_count as usize,
+        crate::CONFIG.jobs.max_polling_clients as usize,
     )
     .await;
     match pool {
@@ -222,76 +233,260 @@ pub async fn create_result_redis_pool() -> ResultConnectionPool {
     }
 }
 
+pub enum JobPoll {
+    Ready { result: JobResult },
+    Pending,
+}
+
+//Repeatedly try to get a job result using the system configuration.
+pub async fn try_poll_job_result(
+    redis: &mut darkredis::Connection,
+    job_id: i32,
+) -> Result<JobPoll, BackendError> {
+    //BRPOPLPUSH keeps the expiry of a list even when there's just a single element in it, so use that to poll.
+    let key = util::get_job_key(job_id);
+    let poll_timeout = crate::CONFIG.jobs.poll_timeout.to_string();
+    let command = darkredis::Command::new("BRPOPLPUSH")
+        .arg(&key)
+        .arg(&key)
+        .arg(&poll_timeout);
+    let result = redis.run_command(command).await?;
+
+    match result
+        .optional_string()
+        .map(|s| serde_json::from_slice::<JobResult>(&s).unwrap())
+    {
+        Some(result) => Ok(JobPoll::Ready { result }),
+        None => Ok(JobPoll::Pending),
+    }
+}
+
 //Get the result of a pathfinding job
 #[get("/job/<token>")]
 pub async fn result(
     pool: State<'_, ResultConnectionPool>,
     token: String,
 ) -> Result<Response<'_>, BackendError> {
+    //Because other clients may be polling at once, there's a possibility that acquiring this connection
+    //will take a while, but that's okay because it cannot take much longer than the poll timeout.
+    //This means that the theoretical maximum time this handler can take is just shy of 2*poll_timeout.
     let mut conn = pool.get().await;
 
-    //Rate limit the number of clients
-    //Is the number of clients too big?
-    let rate_limit_key = util::create_redis_backend_key("job_poll_ratelimiter");
-    //Is the number of polling clients too big?
-    if conn.incr(&rate_limit_key).await.unwrap() > crate::CONFIG.jobs.max_polling_clients as isize {
-        //Yes, send a 504
-        conn.decr(rate_limit_key).await.unwrap();
-        return Ok(Response::build()
-            .status(Status::ServiceUnavailable)
-            .finalize());
-    }
-
     let key = util::get_job_mapping_key(&token);
-    match conn.get(key).await {
-        Ok(Some(k)) => {
+    match conn.get(key).await? {
+        Some(k) => {
             //Poll for a result on this job
             let job_id = String::from_utf8_lossy(&k).parse::<i32>().unwrap();
 
-            match util::try_poll_job_result(&mut conn, job_id).await {
-                Some(result) => {
-                    //Decrement the rate-limiting key.
-                    conn.decr(&rate_limit_key).await?;
+            //See if the result is ready
+            match try_poll_job_result(&mut conn, job_id).await? {
+                JobPoll::Ready { result } => {
+                    let response = match result.outcome {
+                        JobOutcome::Success => {
+                            //Hide the job_id field from the user
+                            let json = Cursor::new(
+                                serde_json::json!({
+                                    "outcome": "success", "points": result.points
+                                })
+                                .to_string(),
+                            );
+                            Response::build()
+                                .status(Status::Ok)
+                                .header(ContentType::JSON)
+                                .sized_body(json)
+                                .await
+                                .finalize()
+                        }
+                        JobOutcome::Failure => Response::build()
+                            .status(Status::InternalServerError)
+                            .sized_body(Cursor::new(
+                                "A pathfinding module failed to complete this job!",
+                            ))
+                            .await
+                            .finalize(),
+                        JobOutcome::Cancelled => {
+                            let json = Cursor::new(
+                                serde_json::json!({
+                                    "outcome": "cancelled", "points": []
+                                })
+                                .to_string(),
+                            );
 
-                    //Cannot fail as it is the same value that gets deserialized in the results receiver
-                    //Hide the job_id field from the user
-                    let json =
-                        Cursor::new(serde_json::json!({"points": result.points}).to_string());
-                    let response = Response::build()
-                        .status(Status::Ok)
-                        .header(ContentType::JSON)
-                        .sized_body(json)
-                        .await
-                        .finalize();
+                            Response::build()
+                                .status(Status::Ok)
+                                .header(ContentType::JSON)
+                                .sized_body(json)
+                                .await
+                                .finalize()
+                        }
+                    };
 
                     Ok(response)
                 }
                 //Not ready yet
-                None => {
-                    conn.decr(rate_limit_key).await.unwrap();
-                    Ok(Response::build().status(Status::NoContent).finalize())
-                }
+                JobPoll::Pending => Ok(Response::build().status(Status::NoContent).finalize()),
             }
         }
-        Ok(None) => {
-            conn.decr(rate_limit_key).await.unwrap();
-            Ok(Response::build().status(Status::NotFound).finalize())
-        }
-        Err(e) => {
-            conn.decr(rate_limit_key).await.unwrap();
-            Err(BackendError::Redis(e))
-        }
+        None => Ok(Response::build().status(Status::NotFound).finalize()),
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key};
-    use rocket::{http::Status, local::Client};
+    use crate::{
+        module_handling::ModuleInfo, types::JobResult, util::create_redis_backend_key, web,
+    };
+    use rocket::{
+        http::{Cookie, Status},
+        local::Client,
+    };
+    use serial_test::serial;
 
-    //Test that submitting and receiving of jobs works
     #[tokio::test]
+    #[serial]
+    //High-level test for job submission through laps.py.
+    async fn job_submission_integration() {
+        //setup
+        //Need both the result_redis pool and the normal one for this test.
+        let redis_result_pool = create_result_redis_pool().await;
+        let redis_pool = crate::create_redis_pool().await;
+        let mut conn = redis_pool.get().await;
+        let docker = crate::connect_to_docker().await;
+        crate::test::clean_docker(&docker).await;
+        tokio::spawn(crate::module_handling::run(redis_pool.clone()));
+        let rocket = rocket::ignite()
+            .mount(
+                "/",
+                routes![
+                    web::admin::login,
+                    web::admin::register_super_admin,
+                    web::admin::restart_module,
+                    web::admin::upload_module,
+                    result,
+                    submit,
+                ],
+            )
+            .manage(redis_result_pool)
+            .manage(docker)
+            .manage(redis_pool.clone());
+        let client = Client::new(rocket).unwrap();
+        crate::test::clear_redis(&mut conn).await;
+        crate::test::insert_test_mapdata(&mut conn).await;
+
+        //Setup and run the test module:
+        let cookies = web::admin::test::create_test_account_and_login(&client).await;
+
+        //A function to create a module and run a job on it. Returns the path to the job polling token.
+        async fn start_and_run_job(
+            client: &Client,
+            cookies: &Vec<Cookie<'static>>,
+            name: &str,
+            version: &str,
+            container: &[u8],
+        ) -> String {
+            let module = ModuleInfo {
+                name: name.into(),
+                version: version.into(),
+            };
+
+            let response = crate::test::upload_test_image(
+                client,
+                &cookies,
+                container,
+                &module.name,
+                &module.version,
+            )
+            .await;
+            assert_eq!(response.status(), Status::Created);
+            //Start the module
+            let response = client
+                .post(format!(
+                    "/module/{}/{}/restart",
+                    module.name, module.version
+                ))
+                .cookies(cookies.clone())
+                .dispatch()
+                .await;
+            assert_eq!(response.status(), Status::Created);
+
+            //The module might take some time to start up so we have to sleep for a bit to continue.
+            //More importantly, we have to yield control to the module handling task since the tests run in a single thread.
+            tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
+
+            //Run a job on the module
+            let job = serde_json::json!({
+                "map_id": 1,
+                "start": {
+                    "x": 1, "y": 1
+                },
+                "stop": {
+                    "x": 100, "y": 100
+                },
+                "algorithm": module
+            });
+            let mut response = client
+                .post("/job")
+                .header(ContentType::JSON)
+                .body(&serde_json::to_vec(&job).unwrap())
+                .dispatch()
+                .await;
+            assert_eq!(response.status(), Status::Accepted);
+
+            //Create the URL to poll for the job result.
+            format!("/job/{}", response.body_string().await.unwrap())
+        }
+
+        //This job should succeed.
+        let successful_job = start_and_run_job(
+            &client,
+            &cookies,
+            "laps-test",
+            "0.1.0",
+            crate::test::TEST_CONTAINER,
+        )
+        .await;
+
+        //Poll the job result until completion.
+        loop {
+            let response = client.get(&successful_job).dispatch().await;
+            match response.status() {
+                //Still pending...
+                Status::NoContent => (),
+                Status::Ok => {
+                    //If we got here we successfully completed the job and all is fine.
+                    break;
+                }
+                _ => panic!("Invalid status: {}", response.status()),
+            }
+        }
+
+        //This job should fail
+        let failing_job = start_and_run_job(
+            &client,
+            &cookies,
+            "laps-failing-test",
+            "0.1.0",
+            crate::test::FAILING_TEST_CONTAINER,
+        )
+        .await;
+
+        //Poll the job result until completion.
+        loop {
+            let response = client.get(&failing_job).dispatch().await;
+            match response.status() {
+                //Still pending...
+                Status::NoContent => (),
+                //If we got this status, all is well.
+                Status::InternalServerError => break,
+                _ => panic!("Invalid status: {}", response.status()),
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    //Test that submitting and receiving of jobs works on a low-level.
     async fn submission() {
         //setup
         //Need both the result_redis pool and the normal one for this test.
@@ -303,7 +498,7 @@ mod test {
             .manage(redis_result_pool)
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
-        util::clear_redis(&mut conn).await;
+        crate::test::clear_redis(&mut conn).await;
         crate::test::insert_test_mapdata(&mut conn).await;
 
         //Add a fake algorithm
@@ -363,11 +558,12 @@ mod test {
         //Complete the job. Because we cleared the job id counter earlier, the job id is guaranteed to be 1.
         let job_id = 1;
         let info = JobResult {
+            outcome: JobOutcome::Success,
             job_id,
             points: vec![Vector { x: 0, y: 0 }, Vector { x: 0, y: 0 }],
         };
         let key = util::get_job_key(job_id);
-        conn.set(key, serde_json::to_vec(&info).unwrap())
+        conn.lpush(key, serde_json::to_vec(&info).unwrap())
             .await
             .unwrap();
 
@@ -383,45 +579,15 @@ mod test {
                 "points": [
                     { "x": 0, "y": 0 },
                     { "x": 0, "y": 0 },
-                ]
+                ],
+                "outcome": "success"
             })
         );
     }
 
-    #[tokio::test]
-    async fn rate_limiting() {
-        //setup
-        let redis_pool = crate::create_redis_pool().await;
-        let redis_result_pool = create_result_redis_pool().await;
-        let mut conn = redis_pool.get().await;
-        let rocket = rocket::ignite()
-            .mount("/", routes![result])
-            .manage(redis_result_pool)
-            .manage(redis_pool.clone());
-        let client = Client::new(rocket).unwrap();
-        util::clear_redis(&mut conn).await;
-
-        //Simulate too many clients connecting at once
-        let max_clients = crate::CONFIG.jobs.max_polling_clients;
-        let rate_limit_key = create_redis_backend_key("job_poll_ratelimiter");
-        conn.set(&rate_limit_key, max_clients.to_string())
-            .await
-            .unwrap();
-
-        //Verify that it denies us. Token does not matter.
-        let response = client.get("/job/256").dispatch().await;
-        assert_eq!(response.status(), Status::ServiceUnavailable);
-
-        //Make room for another client
-        conn.decr(rate_limit_key).await.unwrap();
-
-        //Verify that we are now accepted but that there's no job with this token.
-        let response = client.get("/job/256").dispatch().await;
-        assert_eq!(response.status(), Status::NotFound);
-    }
-
     //Test that we avoid unnecesarry calculations of the same job.
     #[tokio::test]
+    #[serial]
     async fn job_cache() {
         //setup
         let redis_pool = crate::create_redis_pool().await;
@@ -430,8 +596,7 @@ mod test {
             .mount("/", routes![submit])
             .manage(redis_pool.clone());
         let client = Client::new(rocket).unwrap();
-        util::clear_redis(&mut conn).await;
-
+        crate::test::clear_redis(&mut conn).await;
         crate::test::insert_test_mapdata(&mut conn).await;
 
         //Register a fake module
@@ -495,11 +660,12 @@ mod test {
     }
 
     #[tokio::test]
+    #[serial]
     async fn job_validation() {
         //Setup
         let redis_pool = crate::create_redis_pool().await;
         let mut redis = redis_pool.get().await;
-        util::clear_redis(&mut redis).await;
+        crate::test::clear_redis(&mut redis).await;
 
         //Insert test mapdata
         let (width, height) = crate::test::insert_test_mapdata(&mut redis).await;

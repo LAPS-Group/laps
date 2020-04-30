@@ -21,9 +21,9 @@ export default {
   computed: {
     tester() {
       return store.tester;
-    }
+    },
   },
-  data: function() {
+  data: function () {
     return {
       coordinates: {
         //coordinates to be sent
@@ -32,27 +32,27 @@ export default {
         map_id: null,
         algorithm: {
           name: null,
-          version: null
-        }
+          version: null,
+        },
       },
       job_token: {},
       display: {
         data: {
-          points: []
-        }
+          points: [],
+        },
       },
       messageSent: false,
-      map_id: null
+      map_id: null,
     };
   },
 
   computed: {
     selected_algorithms() {
       return store.selected_algorithms;
-    }
+    },
   },
   methods: {
-    submitPoints: async function() {
+    submitPoints: async function () {
       //Convert inputs coords to ints
       this.coordinates.start.x = parseInt(this.coordinates.start.x);
       this.coordinates.start.y = parseInt(this.coordinates.start.y);
@@ -73,8 +73,8 @@ export default {
       //Start the job based on sent information and returns id to fetch result when done
       let res = await axios.post(getRoute("/job"), message, {
         headers: {
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       });
 
       //Stores job token in store
@@ -84,7 +84,7 @@ export default {
       // Send the jobtoken, if the job is done return the result of the job, if not send a new request when the last times out.
       this.getJobResult();
     },
-    getJobResult: async function() {
+    getJobResult: async function () {
       try {
         const c = await axios.get(getRoute("/job/" + this.job_token));
         console.log("Job Done");
@@ -97,8 +97,8 @@ export default {
           this.getJobResult();
         }
       }
-    }
-  }
+    },
+  },
 };
 </script>
 <style>

@@ -9,6 +9,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate rocket;
 
+use bollard::Docker;
 use config::Config;
 use darkredis::ConnectionPool;
 use rocket::config::{Environment, LoggingLevel};
@@ -26,6 +27,7 @@ mod test;
 struct Configuration {
     pub redis: RedisConfig,
     pub jobs: JobConfig,
+    pub login: LoginConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -39,14 +41,20 @@ struct JobConfig {
     //Timeouts in seconds for different purposes
     token_timeout: u32,  // the timeout for a token mapping key
     poll_timeout: u32,   // the amount of time a user can poll a running job
-    poll_times: u32,     // the number of times to poll each job
     result_timeout: u32, // how long the results of a pathfinding job is kept
 
-    //Number of maximum polling clients at once
+    //Maximum number of clients who can poll for jobs at once. Creates this many Redis connections.
     max_polling_clients: u32,
-    //Additional connections to use in addition to max_polling clients,
-    //in order to quickly deny additional clients
-    additional_connections: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct LoginConfig {
+    //Timeout in seconds for sessions
+    session_timeout: u32,
+    //Minimum password length
+    minimum_password_length: u8,
+    //Maximum password length
+    maximum_password_length: u8,
 }
 
 lazy_static! {
@@ -108,6 +116,23 @@ async fn create_redis_pool() -> ConnectionPool {
     }
 }
 
+//There's not much reason to use a connection pool for the Docker client because there will never be
+//that many administrators connecting at once. There's also no pre-made solution for Bollard so it's
+//best to not bother.
+async fn connect_to_docker() -> bollard::Docker {
+    info!("Connecting to Docker...");
+    match Docker::connect_with_local_defaults() {
+        Ok(d) => {
+            info!("Succesfully connected to Docker!");
+            d
+        }
+        Err(e) => {
+            error!("Failed to connect to Docker: {:?}", e);
+            std::process::exit(1)
+        }
+    }
+}
+
 fn setup_logging() {
     //Set the log level of things.
     //We want to always have info active for LAPS, but not necesarrily for Rocket.
@@ -131,6 +156,9 @@ fn setup_logging() {
 
     //Set the environment variable correctly
     let mut log_value = format!("{}={}", env!("CARGO_PKG_NAME"), laps_level);
+    //Set the same log level for laps_convert
+    log_value += &format!(",laps_convert={}", laps_level);
+
     if let Some(level) = other_level {
         log_value += &format!(",{}", level);
     }

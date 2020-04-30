@@ -9,7 +9,7 @@
           left: recivedCoordinates.points[index].x + 'px',
           top: recivedCoordinates.points[index].y + 'px',
           backgroundColor: colour,
-          Zindex: 1
+          Zindex: 1,
         }"
       >
       </canvas>
@@ -24,14 +24,14 @@ export default {
   computed: {
     recivedCoordinates() {
       return store.recivedCoordinates;
-    }
+    },
   },
   props: [],
 
-  data: function() {
+  data: function () {
     return {
-      colour: "red"
+      colour: "red",
     };
-  }
+  },
 };
 </script>

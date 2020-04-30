@@ -6,7 +6,6 @@ export const store = Vue.observable({
   selected_algorithms: [],
   job_token: null,
   map_id: null,
-  pictureRecived: false
 });
 //function to update a variable
 export const mutations = {
@@ -25,7 +24,4 @@ export const mutations = {
   setmap_id(map_id) {
     store.map_id = map_id;
   },
-  setpictureRecived(pictureRecived) {
-    store.pictureRecived = pictureRecived;
-  }
 };
