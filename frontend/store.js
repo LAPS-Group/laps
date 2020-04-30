@@ -6,6 +6,11 @@ export const store = Vue.observable({
   selected_algorithms: [],
   job_token: null,
   map_id: null,
+  pictureRecived: false,
+  markers: [
+    { x: null, y: null },
+    { x: null, y: null },
+  ],
 });
 //function to update a variable
 export const mutations = {
@@ -23,5 +28,12 @@ export const mutations = {
   },
   setmap_id(map_id) {
     store.map_id = map_id;
+  },
+  setpictureRecived(pictureRecived) {
+    store.pictureRecived = pictureRecived;
+  },
+  setMarker(x, y, markerNumber) {
+    store.markers[markerNumber].x = x;
+    store.markers[markerNumber].y = y;
   },
 };

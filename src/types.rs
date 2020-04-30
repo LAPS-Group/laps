@@ -23,7 +23,6 @@ pub enum JobOutcome {
     Failure,
     Cancelled,
 }
-
 //Struct for storing the ouptut of a pathfinding job.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct JobResult {

@@ -41,7 +41,9 @@ export default {
     refreshMaps: async function () {
       let maps = await axios.get(getRoute("/maps"));
       this.maps = maps.data.maps;
-      this.maps.sort(function(a, b) { return parseInt(a) - parseInt(b) });
+      this.maps.sort(function (a, b) {
+        return parseInt(a) - parseInt(b);
+      });
     },
     deleteMap: async function (map) {
       let url = getRoute("/map/" + map);
