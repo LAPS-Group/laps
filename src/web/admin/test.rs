@@ -718,7 +718,7 @@ async fn ignored_modules() {
     let cookies = create_test_account_and_login(&client).await;
 
     //Upload a test module which we should be able to see.
-    let module = ModuleInfo {
+    let visible_module = ModuleInfo {
         name: "laps-test".into(),
         version: "0.1.0".into(),
     };
@@ -726,14 +726,14 @@ async fn ignored_modules() {
         &client,
         &cookies,
         crate::test::TEST_CONTAINER,
-        &module.name,
-        &module.version,
+        &visible_module.name,
+        &visible_module.version,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
 
     //Upload a couple of images which should be ignored in the list.
-    let module = ModuleInfo {
+    let hidden_module_1 = ModuleInfo {
         name: "laps-test-ignore".into(),
         version: "0.1.0".into(),
     };
@@ -741,12 +741,12 @@ async fn ignored_modules() {
         &client,
         &cookies,
         crate::test::TEST_CONTAINER,
-        &module.name,
-        &module.version,
+        &hidden_module_1.name,
+        &hidden_module_1.version,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
-    let module = ModuleInfo {
+    let hidden_module_2 = ModuleInfo {
         name: "laps-foo".into(),
         version: "0.1.0".into(),
     };
@@ -754,25 +754,31 @@ async fn ignored_modules() {
         &client,
         &cookies,
         crate::test::TEST_CONTAINER,
-        &module.name,
-        &module.version,
+        &hidden_module_2.name,
+        &hidden_module_2.version,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
 
-    //Get the list of modules and verify that only laps-test is in the response.
+    //Get the list of modules and verify that laps-test is in the response, but the two hidden ones are not.
     let mut response = client
         .get("/module/all")
         .cookies(cookies.clone())
         .dispatch()
         .await;
     assert_eq!(response.status(), Status::Ok);
-    let mut modules: Vec<PathModule> =
+    let modules: Vec<PathModule> =
         serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
-    dbg!(&modules);
-    assert_eq!(modules.len(), 1);
-    assert_eq!(
-        modules.pop().map(|m| m.module.name),
-        Some("laps-test".into())
-    )
+    assert!(modules.contains(&PathModule {
+        module: visible_module.clone(),
+        state: ModuleState::Stopped
+    }));
+    assert!(!modules.contains(&PathModule {
+        module: hidden_module_1.clone(),
+        state: ModuleState::Stopped
+    }));
+    assert!(!modules.contains(&PathModule {
+        module: hidden_module_2.clone(),
+        state: ModuleState::Stopped
+    }));
 }
