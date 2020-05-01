@@ -41,6 +41,8 @@ pub async fn clean_docker(docker: &Docker) {
         "laps-test-image:latest",
         "laps-test:0.1.0",
         "laps-failing-test:0.1.0",
+        "laps-test-ignore:0.1.0",
+        "laps-foo:0.1.0",
     ] {
         match docker.remove_image(image, Some(options), None).await {
             Ok(_) => println!("Found and deleted old test image {}", image),

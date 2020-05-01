@@ -15,3 +15,6 @@ additional_connections = 1
 #Make the password lengths smaller so the tests are easier to read
 minimum_password_length = 4
 maximum_password_length = 8
+
+[module]
+ignore = ["python", "laps-test-ignore", "laps-foo"]

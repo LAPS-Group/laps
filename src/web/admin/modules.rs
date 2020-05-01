@@ -61,7 +61,7 @@ pub async fn get_module_logs<'a>(
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "state")]
 pub enum ModuleState {
@@ -71,7 +71,7 @@ pub enum ModuleState {
 }
 
 //Return value for the module structs, with an additional field to determine if a module is currently running.
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct PathModule {
     #[serde(flatten)]
     pub state: ModuleState,
@@ -188,6 +188,11 @@ pub async fn get_all_modules(
             for tag in tags {
                 //A valid tag created by the backend will always have a version.
                 let module = extract_module_info_from_tag(&tag).unwrap();
+
+                //Skip this module if it is in the ignore list.
+                if (*crate::CONFIG).module.ignore.contains(&module.name) {
+                    continue;
+                }
 
                 //Look for a container associated with this image.
                 let state = match all_modules.iter().find(|(m, _)| m == &module) {
