@@ -23,7 +23,7 @@ jobs:
       - docker
     after_success: |
       if [ "$TRAVIS_BRANCH" != "staging" ]; then
-        cargo tarpaulin --out Xml
+        cargo tarpaulin --out Xml -v
         bash <(curl -s https://codecov.io/bash)
       fi
   - stage: test
