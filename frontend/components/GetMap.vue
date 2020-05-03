@@ -20,7 +20,7 @@
 
     <!-- creates a new template wich is only displayed if a map is recived-->
 
-    <template v-if="pictureRecived == true"
+    <template v-if="pictureRecived == true" style="z-index=1"
       ><br />
 
       <div
@@ -28,40 +28,41 @@
         style="
            {
             align-items: flex-start;
-            position: relative;
+            position: absolute;
             float: left;
             left: 300px;
           }
         "
       >
-        <template v-if="displayM1 == true">
-          <canvas
-            id="marker1"
-            width="7"
-            height="7"
-            v-bind:style="{
-              left: x1 - 3 + 'px',
-              top: y1 - 3 + 'px',
-              Zindex: 1,
-            }"
-          ></canvas>
-        </template>
-        <template v-if="displayM2 == true">
-          <canvas
-            id="marker2"
-            width="7"
-            height="7"
-            v-show="true"
-            v-bind:style="{
-              left: x2 - 3 + 'px',
-              top: y2 - 3 + 'px',
-              Zindex: 1,
-            }"
-          ></canvas>
-        </template>
         <div class="mapcontainer">
-          <img :src="this.map_link" v-on:click="placeMarker" />
+          <img
+            :src="this.map_link"
+            v-on:click="placeMarker"
+            style="z-index=0"
+          />
         </div>
+
+        <template v-if="displayM1 == true">
+          <img
+            :src="images.marker1"
+            style="width: 2%; height: 2%; position: absolute; z-index=2"
+            v-bind:style="{
+              left: x1 - 14 + 'px',
+              top: y1 - 24 + 'px',
+              Zindex: 2,
+            }"
+        /></template>
+
+        <template v-if="displayM2 == true">
+          <img
+            :src="images.marker1"
+            style="width: 2%; height: 2%; position: absolute; z-index=2"
+            v-bind:style="{
+              left: x2 - 14 + 'px',
+              top: y2 - 24 + 'px',
+              Zindex: 2,
+            }"
+        /></template>
         <!-- Calls the component DrawCords-->
         <draw-cordinates />
       </div>
@@ -73,6 +74,7 @@ import DrawCordinates from "./DrawCords.vue";
 import axios from "axios";
 import { getRoute } from "route";
 import { store, mutations } from "../store.js";
+import marker from "images/marker1.png";
 
 export default {
   //defines components used
@@ -99,6 +101,9 @@ export default {
       mapList: null,
       options: [],
       selected: "PLaceholder",
+      images: {
+        marker1: marker,
+      },
     };
   },
 
@@ -163,20 +168,15 @@ canvas {
   top: 0px;
   left: 0px;
 
-  background-color: red;
+  /*background-color: red;*/
   z-index: 1;
 }
 .mapcontainer {
-  position: absolute;
-  align-items: flex-start;
-}
-/*
-.map {
-  align-items: flex-start;
   position: relative;
-  float: left;
-  left: 300px;
-}*/
+  align-items: flex-start;
+  z-index: 0;
+}
+
 .drop-down {
   display: block;
   /*font-size: 16px;
