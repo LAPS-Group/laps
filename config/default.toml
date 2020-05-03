@@ -28,3 +28,8 @@ session_timeout = 3600
 minimum_password_length = 8
 #A password cannot be longer than this.
 maximum_password_length = 128
+
+[module]
+# The names of Docker images to exclude in the admin panel list of modules.
+# Ignore the base module image by default.
+ignore = ["python"]

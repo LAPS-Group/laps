@@ -696,3 +696,83 @@ async fn start_stop_module() {
     assert_eq!(response.status(), Status::BadRequest);
     assert!(!module_is_running(&docker, &module).await.unwrap());
 }
+
+#[tokio::test]
+#[serial]
+//Test that the ignored modules setting works as expected.
+async fn ignored_modules() {
+    //Setup rocket instance
+    let redis = crate::create_redis_pool().await;
+    let docker = crate::connect_to_docker().await;
+    let rocket = rocket::ignite()
+        .mount(
+            "/",
+            routes![get_all_modules, login, upload_module, register_super_admin,],
+        )
+        .manage(redis.clone())
+        .manage(crate::connect_to_docker().await);
+    let client = Client::new(rocket).unwrap();
+    let mut conn = redis.get().await;
+    crate::test::clear_redis(&mut conn).await;
+    crate::test::clean_docker(&docker).await;
+    let cookies = create_test_account_and_login(&client).await;
+
+    //Upload a test module which we should be able to see.
+    let module = ModuleInfo {
+        name: "laps-test".into(),
+        version: "0.1.0".into(),
+    };
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+    )
+    .await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Upload a couple of images which should be ignored in the list.
+    let module = ModuleInfo {
+        name: "laps-test-ignore".into(),
+        version: "0.1.0".into(),
+    };
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+    )
+    .await;
+    assert_eq!(response.status(), Status::Created);
+    let module = ModuleInfo {
+        name: "laps-foo".into(),
+        version: "0.1.0".into(),
+    };
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+    )
+    .await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Get the list of modules and verify that only laps-test is in the response.
+    let mut response = client
+        .get("/module/all")
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Ok);
+    let mut modules: Vec<PathModule> =
+        serde_json::from_slice(&response.body_bytes().await.unwrap()).unwrap();
+    dbg!(&modules);
+    assert_eq!(modules.len(), 1);
+    assert_eq!(
+        modules.pop().map(|m| m.module.name),
+        Some("laps-test".into())
+    )
+}

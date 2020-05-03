@@ -28,6 +28,7 @@ struct Configuration {
     pub redis: RedisConfig,
     pub jobs: JobConfig,
     pub login: LoginConfig,
+    pub module: ModuleConfig,
 }
 
 #[derive(serde::Deserialize)]
@@ -55,6 +56,12 @@ struct LoginConfig {
     minimum_password_length: u8,
     //Maximum password length
     maximum_password_length: u8,
+}
+
+#[derive(serde::Deserialize)]
+struct ModuleConfig {
+    //Images to ignore in the admin panel list.
+    ignore: Vec<String>,
 }
 
 lazy_static! {

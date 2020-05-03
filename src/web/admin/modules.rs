@@ -61,7 +61,7 @@ pub async fn get_module_logs<'a>(
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "state")]
 pub enum ModuleState {
@@ -71,7 +71,7 @@ pub enum ModuleState {
 }
 
 //Return value for the module structs, with an additional field to determine if a module is currently running.
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct PathModule {
     #[serde(flatten)]
     pub state: ModuleState,
@@ -81,10 +81,20 @@ pub struct PathModule {
 
 fn extract_module_info_from_tag(tag: &str) -> Option<ModuleInfo> {
     //A valid tag will always have the format "a:b"
-    tag.find(':').map(|s| ModuleInfo {
-        name: tag[..s].to_string(),
-        version: tag[s + 1..].to_string(),
-    })
+    tag.find(':')
+        .map(|s| {
+            let module = ModuleInfo {
+                name: tag[..s].to_string(),
+                version: tag[s + 1..].to_string(),
+            };
+            //Ignore untagged modules
+            if module.name != "<none>" {
+                Some(module)
+            } else {
+                None
+            }
+        })
+        .flatten()
 }
 
 //Get a list of the running modules
@@ -122,11 +132,10 @@ pub async fn module_exists(docker: &Docker, module: &ModuleInfo) -> Result<bool,
         .map_err(BackendError::Docker)?;
     //Figure out if module with name `name` and version `version` is in that list.
     Ok(images.into_iter().any(|i| {
-        //We are are guaranteed to have a version if repo_tags is Some.
         if let Some(t) = i.repo_tags {
             t.into_iter()
-                .map(|s| extract_module_info_from_tag(&s).unwrap())
-                .any(|s| &s == module)
+                .map(|s| extract_module_info_from_tag(&s))
+                .any(|s| s.as_ref() == Some(module))
         } else {
             false
         }
@@ -186,8 +195,17 @@ pub async fn get_all_modules(
         //For each tag, grab the module information so that we display all modules, even those with identical images.
         if let Some(tags) = image.repo_tags {
             for tag in tags {
-                //A valid tag created by the backend will always have a version.
-                let module = extract_module_info_from_tag(&tag).unwrap();
+                //If there is no module info for this image, this can fail. `ApiImage::repo_tags`
+                //has a confusing type signature for sure...
+                let module = match extract_module_info_from_tag(&tag) {
+                    Some(m) => m,
+                    None => continue,
+                };
+
+                //Skip this module if it is in the ignore list.
+                if (*crate::CONFIG).module.ignore.contains(&module.name) {
+                    continue;
+                }
 
                 //Look for a container associated with this image.
                 let state = match all_modules.iter().find(|(m, _)| m == &module) {
