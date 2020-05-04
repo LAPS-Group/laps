@@ -1,4 +1,4 @@
-FROM python:slim-buster
+FROM amd64/python:slim-buster
 RUN apt-get update
 RUN apt-get upgrade -y
 RUN python3 -m pip install redis

@@ -32,4 +32,4 @@ maximum_password_length = 128
 [module]
 # The names of Docker images to exclude in the admin panel list of modules.
 # Ignore the base module image by default.
-ignore = ["python"]
+ignore = ["amd64/python"]
