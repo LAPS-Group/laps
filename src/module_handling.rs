@@ -2,7 +2,7 @@ use crate::{
     types::{BackendError, JobOutcome, JobResult},
     util::{
         create_redis_backend_key, create_redis_key, get_job_key, get_module_log_key,
-        get_module_work_key,
+        get_module_work_key, get_module_workers_key, get_registered_module_workers_key,
     },
     web::job::JobInfo,
 };
@@ -30,6 +30,21 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
 
         match shutdown {
             Ok(info) => {
+                //Only remove a module from the active module set it *all* the workers are shut down.
+                let remaining_workers = conn
+                    .decr(get_registered_module_workers_key(&info))
+                    .await
+                    .unwrap();
+                if remaining_workers > 0 {
+                    info!(
+                        "Worker for module {} shut down, {} workers remaining!",
+                        info, remaining_workers
+                    );
+                    continue;
+                } else if remaining_workers < 0 {
+                    warn!("Remaining {} workers is < 0! {}", info, remaining_workers);
+                }
+
                 info!("Module {} shut down", info);
 
                 //Now that the module is shut down, cancel any job it may have queued up.
@@ -139,12 +154,19 @@ async fn result_listener(pool: darkredis::ConnectionPool) {
     }
 }
 
+//A log message received from a module worker.
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 struct ModuleLog {
+    //The module the message is from.
     pub module: ModuleInfo,
+    //The message itself.
     pub message: String,
+    //The log level of the message.
     pub level: String,
+    //UNIX timestamp when the message was emitted.
     pub instant: i64,
+    //The worker number the message came from.
+    pub worker: u8,
 }
 
 //Listen and report module logs.
@@ -167,16 +189,20 @@ pub async fn log_listener(pool: darkredis::ConnectionPool) {
         let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(entry.instant, 0), Utc);
         //Store the log entry as a simple string.
         let stored_entry = format!(
-            "[{} {}] {}",
+            "[{} {} worker:{}] {}",
             time.to_rfc3339_opts(SecondsFormat::Secs, true),
             entry.level,
+            entry.worker,
             entry.message
         );
         conn.rpush(log_key, stored_entry)
             .await
             .expect("pushing module logs");
 
-        let log_message = format!("Module {}: {}", entry.module, entry.message);
+        let log_message = format!(
+            "Module {}[{}]: {}",
+            entry.module, entry.worker, entry.message
+        );
 
         //Print out the message into the server logs
         match entry.level.as_str() {
@@ -212,15 +238,36 @@ pub async fn run(pool: darkredis::ConnectionPool) {
 
         let metadata: ModuleInfo = serde_json::from_slice(&data).unwrap();
 
-        //Register the module for use later using a set
-        conn.sadd(create_redis_backend_key("registered_modules"), data)
+        //Increment the registered module counter.
+        let workers = conn
+            .incr(get_registered_module_workers_key(&metadata))
             .await
-            .expect("registering existing module");
+            .expect("updating module worker count");
 
-        info!(
-            "Registered module {} version {}",
-            metadata.name, metadata.version
-        );
+        //Only bother adding the module to the registered set it the module was registered for the first time.
+        if workers > 1 {
+            //Get the number of expected workers to print a nice log message.
+            let total_workers = conn
+                .get(get_module_workers_key(&metadata))
+                .await
+                .expect("getting desired worker count")
+                .map(|s| String::from_utf8_lossy(&s).parse::<u8>().unwrap())
+                .unwrap();
+            info!(
+                "Registered {}/{} workers for module {}",
+                workers, total_workers, metadata
+            )
+        } else {
+            //Register the module for use later using a set
+            conn.sadd(create_redis_backend_key("registered_modules"), data)
+                .await
+                .expect("registering existing module");
+
+            info!(
+                "Registered module {} version {}",
+                metadata.name, metadata.version
+            );
+        }
     }
 }
 
@@ -250,7 +297,10 @@ mod test {
     use super::ModuleInfo;
     use crate::{
         types::{JobOutcome, JobResult, Vector},
-        util::{create_redis_backend_key, get_job_cache_key, get_module_work_key},
+        util::{
+            create_redis_backend_key, get_job_cache_key, get_module_work_key,
+            get_module_workers_key, get_registered_module_workers_key,
+        },
         web::job::{JobInfo, JobSubmission},
     };
     use futures::StreamExt;
@@ -373,5 +423,75 @@ mod test {
             .await;
 
         assert!(caches.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    //Test that concurrent modules are handled properly.
+    async fn concurrent_modules() {
+        let pool = crate::create_redis_pool().await;
+        let mut conn = pool.get().await;
+        crate::test::clear_redis(&mut conn).await;
+        tokio::task::spawn(super::run(pool.clone()));
+
+        let workers = 2isize; //How many workers to simulate in the test. Only 2 or higher makes sense here.
+        let worker_module = ModuleInfo {
+            name: "laps-test".into(),
+            version: "0.1.0".into(),
+        };
+        let module_key = create_redis_backend_key("registered_modules");
+        let registration_key = create_redis_backend_key("register-module");
+        let shutdown_key = create_redis_backend_key("module-shutdown");
+
+        //Set the number of expected workers.
+        conn.set(get_module_workers_key(&worker_module), workers.to_string())
+            .await
+            .unwrap();
+
+        //Simulate the startup of the workers.
+        let message = serde_json::to_string_pretty(&worker_module).unwrap();
+        for _ in 0..workers {
+            conn.rpush(&registration_key, &message).await.unwrap();
+        }
+
+        //Yield to let the handler code run.
+        tokio::time::delay_for(Duration::from_millis(100)).await;
+
+        //Check that the register count is correct and that the module is registered.
+        assert!(conn.sismember(&module_key, &message).await.unwrap());
+        assert_eq!(
+            conn.get(&get_registered_module_workers_key(&worker_module))
+                .await
+                .unwrap(),
+            Some(workers.to_string().into_bytes())
+        ); //count check
+
+        //Shut down one of the workers.
+        conn.rpush(&shutdown_key, &message).await.unwrap();
+        tokio::time::delay_for(Duration::from_millis(300)).await;
+
+        //Check that one worker less is running, but that the module is still running.
+        assert!(conn.sismember(&module_key, &message).await.unwrap());
+        assert_eq!(
+            conn.get(&get_registered_module_workers_key(&worker_module))
+                .await
+                .unwrap(),
+            Some((workers - 1).to_string().into_bytes())
+        ); //count check
+
+        //Kill the last workers
+        for _ in 1..workers {
+            conn.rpush(&shutdown_key, &message).await.unwrap();
+        }
+
+        //Now that all workers are down, ensure that the module is down too.
+        tokio::time::delay_for(Duration::from_millis(300)).await;
+        assert!(!conn.sismember(&module_key, &message).await.unwrap());
+        assert_eq!(
+            conn.get(&get_registered_module_workers_key(&worker_module))
+                .await
+                .unwrap(),
+            Some("0".into())
+        ); //count check
     }
 }

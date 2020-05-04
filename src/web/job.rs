@@ -396,6 +396,7 @@ mod test {
                 container,
                 &module.name,
                 &module.version,
+                None,
             )
             .await;
             assert_eq!(response.status(), Status::Created);

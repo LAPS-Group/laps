@@ -16,6 +16,8 @@ parser.add_argument('--redis_host', type=str, default='localhost', required=Fals
 parser.add_argument('--port', type=int, default='6379')
 # Test mode check
 parser.add_argument('--test', action='store_true')
+# Worker number.
+parser.add_argument('--worker_number', type=int, default=0, required=False)
 
 args = parser.parse_args()
 
@@ -32,6 +34,7 @@ class Runner:
     def __init__(self):
         self.name = args.name
         self.version = args.version
+        self.worker_number = args.worker_number
         # Redis-py does connection pooling by default
         self.redis = redis.StrictRedis(host=args.redis_host, port=args.port)
 
@@ -42,8 +45,6 @@ class Runner:
             self.log_key = "laps.testing.moduleLogs"
         else:
             self.log_key = "laps.moduleLogs"
-
-        self.register_module()
 
         self.job_key = self.create_redis_key("work")
 
@@ -58,20 +59,13 @@ class Runner:
             self.ident
         )
 
-    # Register a module with Redis, can throw an error
+    # Register self as a module in the system.
     def register_module(self):
-        # For checking if a module exists, it has to be serialized in the exact same
-        # way as the backend does it, with the same spacing and all.
-        # There's no good way to do this, so we have to use a format string like this.
-        # This might break when changing stuff in the backend.
-        ident = "{{\"name\": \"{0}\", \"version\": \"{1}\"}}".format(self.name, self.version)
+        ident = json.dumps({
+            "name": self.name,
+            "version": self.version
+        })
         self.ident = ident
-
-        # Prod the registered_modules set to determine if we are already registered
-        key = self.create_backend_redis_key("registered_modules")
-        if self.redis.sismember(key, ident):
-            # We already exist, throw an error
-            raise Exception("Already have registered a module {0} v{1}".format(self.name, self.version))
 
         self.redis.rpush(
             self.create_backend_redis_key("register-module"),
@@ -81,6 +75,9 @@ class Runner:
 
     # Main module loop
     def run(self, handler):
+        # Register self here as ready to accept jobs.
+        self.register_module()
+
         global g_running
         blocking = True
         # Setup a signal handler to kill the loop before the next iteration when SIGINT is sent
@@ -169,7 +166,7 @@ class Runner:
                 return "\033[32m"
             else:
                 return "\033[36m"
-        print("[{0}Z] {1}{2}\033[0m: {3}".format(datetime.utcnow(), loglevel_to_escape(level),
+        print("[{0}Z {1}{2}\033[0m]: {3}".format(datetime.utcnow(), loglevel_to_escape(level),
                                                  level, message), flush=True)
         msg = {
             "message": message,
@@ -178,6 +175,7 @@ class Runner:
                 "name": self.name,
                 "version": self.version
             },
+            "worker": self.worker_number,
             "instant": int(time.time())
         }
 

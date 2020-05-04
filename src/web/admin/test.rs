@@ -1,5 +1,6 @@
 use super::*;
 use crate::{module_handling::ModuleInfo, util};
+use bollard::container::ListContainersOptions;
 use modules::{module_exists, module_is_running};
 use multipart::client::lazy::Multipart;
 use rocket::{
@@ -402,6 +403,7 @@ async fn module_logs() {
         crate::test::TEST_CONTAINER,
         name,
         version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -477,6 +479,7 @@ async fn get_modules() {
         crate::test::TEST_CONTAINER,
         &module.name,
         &module.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -507,6 +510,7 @@ async fn get_modules() {
         crate::test::TEST_CONTAINER,
         &module.name,
         &module.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::BadRequest);
@@ -518,6 +522,7 @@ async fn get_modules() {
         &[0u8],
         "some-unique-name",
         &module.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::BadRequest);
@@ -534,6 +539,7 @@ async fn get_modules() {
         crate::test::INSTANTLY_FAILING_TEST_CONTAINER,
         &failing_module.name,
         &failing_module.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -627,6 +633,7 @@ async fn start_stop_module() {
         crate::test::TEST_CONTAINER,
         &module.name,
         &module.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -701,7 +708,7 @@ async fn start_stop_module() {
 #[serial]
 //Test that the ignored modules setting works as expected.
 async fn ignored_modules() {
-    //Setup rocket instance
+    //setup rocket instance
     let redis = crate::create_redis_pool().await;
     let docker = crate::connect_to_docker().await;
     let rocket = rocket::ignite()
@@ -728,6 +735,7 @@ async fn ignored_modules() {
         crate::test::TEST_CONTAINER,
         &visible_module.name,
         &visible_module.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -743,6 +751,7 @@ async fn ignored_modules() {
         crate::test::TEST_CONTAINER,
         &hidden_module_1.name,
         &hidden_module_1.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -756,6 +765,7 @@ async fn ignored_modules() {
         crate::test::TEST_CONTAINER,
         &hidden_module_2.name,
         &hidden_module_2.version,
+        None,
     )
     .await;
     assert_eq!(response.status(), Status::Created);
@@ -781,4 +791,69 @@ async fn ignored_modules() {
         module: hidden_module_2.clone(),
         state: ModuleState::Stopped
     }));
+}
+
+#[tokio::test]
+#[serial]
+//Test that modules which are marked as able to run concurrently actually are.
+async fn concurrent_module_start() {
+    //setup rocket instance
+    let redis = crate::create_redis_pool().await;
+    let docker = crate::connect_to_docker().await;
+    let rocket = rocket::ignite()
+        .mount(
+            "/",
+            routes![
+                get_all_modules,
+                login,
+                upload_module,
+                register_super_admin,
+                restart_module
+            ],
+        )
+        .manage(redis.clone())
+        .manage(crate::connect_to_docker().await);
+    let client = Client::new(rocket).unwrap();
+    let mut conn = redis.get().await;
+    crate::test::clear_redis(&mut conn).await;
+    crate::test::clean_docker(&docker).await;
+    let cookies = create_test_account_and_login(&client).await;
+
+    //Upload and start a module with two workers.
+    let module = ModuleInfo {
+        name: "laps-test".into(),
+        version: "0.1.0".into(),
+    };
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+        Some(2),
+    )
+    .await;
+    assert_eq!(response.status(), Status::Created);
+    let response = client
+        .post(format!(
+            "/module/{}/{}/restart",
+            module.name, module.version
+        ))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Verify that there actually are two running containers from the same module image.
+    let containers: Vec<String> = docker
+        .list_containers(None::<ListContainersOptions<String>>)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.names)
+        .flatten()
+        .collect();
+    //Container names start with a /
+    assert!(containers.contains(&"/laps-test-0.1.0-0".to_string()));
+    assert!(containers.contains(&"/laps-test-0.1.0-1".to_string()));
 }

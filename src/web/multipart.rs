@@ -52,6 +52,10 @@ quick_error::quick_error! {
         InvalidUtf8(field: String) {
             display("Field '{}' is not valid UTF-8", field)
         }
+        //Something else happened
+        Other(cause: String) {
+            display("{}", cause)
+        }
     }
 }
 

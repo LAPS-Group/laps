@@ -4,7 +4,7 @@ use crate::{
     module_handling::ModuleInfo,
     types::{BackendError, UserError},
     util,
-    web::multipart::MultipartForm,
+    web::multipart::{FormError, MultipartForm},
 };
 use bollard::{
     container::{
@@ -15,6 +15,7 @@ use bollard::{
     Docker,
 };
 use darkredis::ConnectionPool;
+use futures::stream::{StreamExt, TryStreamExt};
 use rocket::{
     http::{ContentType, Status},
     request::State,
@@ -23,7 +24,6 @@ use rocket::{
 use rocket_contrib::json::Json;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use tokio::stream::StreamExt;
 
 #[get("/module/<name>/<version>/logs")]
 pub async fn get_module_logs<'a>(
@@ -228,6 +228,7 @@ pub async fn get_all_modules(
 #[post("/module", data = "<form>")]
 pub async fn upload_module(
     mut form: MultipartForm,
+    pool: State<'_, ConnectionPool>,
     docker: State<'_, Docker>,
     session: AdminSession,
 ) -> Result<Status, UserError> {
@@ -244,6 +245,23 @@ pub async fn upload_module(
     //Get the required fields out of the form.
     let name = form.get_text("name")?.trim().to_string();
     let version = form.get_text("version")?.trim().to_string();
+
+    //This field is optional and determines how many instances of the module we can run at once.
+    //If the field doesn't exist, assume 1.
+    let concurrent_workers = match form.get_text("workers").map(|s| s.parse::<u8>()) {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            warn!("Failed to parse worker count: {}", e);
+            return Err(UserError::BadForm(FormError::Other(
+                "Invalid worker count".into(),
+            )));
+        }
+        Err(FormError::MissingText(_)) => 1,
+
+        Err(e) => {
+            return Err(UserError::BadForm(e));
+        }
+    };
 
     //Accept only .tar
     let module = form.get_file(&mime_consts::X_TAR, "module")?;
@@ -318,6 +336,18 @@ pub async fn upload_module(
         }
     }
 
+    //Now that everything has succeeded, store the number of jobs we can use in the database.
+    //This shouldn't fail, but if it does, return an error.
+    let mut redis = pool.get().await;
+    let key = util::get_module_workers_key(&info);
+    match redis.set(&key, concurrent_workers.to_string()).await {
+        Ok(()) => (),
+        Err(e) => {
+            error!("Failed to set worker count for {}: {}", info, e);
+            return Err(UserError::Internal(BackendError::Redis(e)));
+        }
+    };
+
     info!("{} imported module {}", session.username, info);
     Ok(Status::Created)
 }
@@ -328,6 +358,7 @@ pub async fn restart_module(
     name: String,
     version: String,
     docker: State<'_, Docker>,
+    pool: State<'_, ConnectionPool>,
 ) -> Result<Status, BackendError> {
     //First, verify that the requested module actually exists:
     let module = ModuleInfo { name, version };
@@ -335,88 +366,134 @@ pub async fn restart_module(
         return Ok(Status::NotFound);
     }
 
+    //Get the number of concurrent workers allowed for this module without hogging the Redis connection.
+    let concurrent_workers = {
+        let mut conn = pool.get().await;
+        conn.get(&util::get_module_workers_key(&module))
+            .await?
+            .map(|s| String::from_utf8_lossy(&s).parse::<u8>().unwrap())
+            .expect("getting worker number field")
+    };
+
     //If the module is already running, use the restart_container method
     let container_name = module.to_string().replace(":", "-");
     if module_is_running(&docker, &module).await? {
-        //Give the module 30s to shut down
-        let options = RestartContainerOptions { t: 30 };
-        docker
-            .restart_container(&container_name, Some(options))
+        //It might take a while to restart a module as it will have to have time to exit.
+        //To get around this, perform each restart concurrently.
+        futures::stream::iter(0..concurrent_workers)
+            .map(|n| Ok(n))
+            .try_for_each_concurrent(None, |n| {
+                let docker = docker.clone();
+                let session = session.clone();
+                let module = module.clone();
+                let n = n.clone();
+                let container_name = format!("{}-{}", container_name, n);
+                async move {
+                    trace!("Restarting {} worker {}", session.username, &module);
+                    //Give the module 30s to shut down
+                    let options = RestartContainerOptions { t: 30 };
+                    match docker
+                        .restart_container(&container_name, Some(options))
+                        .await
+                    {
+                        Ok(_) => {
+                            info!(
+                                "{} restarted module {} worker {}",
+                                session.username, &module, n
+                            );
+                            Ok(())
+                        }
+                        Err(e) => {
+                            error!("Failed to restart module {} worker {}: {}", &module, n, e);
+                            Err(e)
+                        }
+                    }
+                }
+            })
             .await?;
-        info!("{} restarted module {}", session.username, &module);
         Ok(Status::NoContent)
     } else {
-        //If a container has already been created for the module, do not create a container with the same name again.
+        //If containers have already been created for the module, do not try to recreate them.
         let options = ListContainersOptions::<String> {
             all: true,
             ..Default::default()
         };
-        let container_exists = docker
+        let containers_exist = docker
             .list_containers(Some(options))
             .await?
             .into_iter()
             .any(|c| {
                 //When we receive the container names from Docker, they all start with a `/` for some reason.
-                c.names.into_iter().any(|s| s.ends_with(&container_name))
+                c.names
+                    .into_iter()
+                    .any(|s| s[1..].starts_with(&container_name))
             });
-        if !container_exists {
-            //No container has been created yet, build it from scratch
-            debug!("Creating new container {}", container_name);
+        if !containers_exist {
+            //No containers have been created yet, build them up
+            debug!("Creating containers for module {}", container_name);
             let redis = &crate::CONFIG.redis.address;
             //For Redis to succeed in connecting the format of the address field must be <host>:<port>
             let split = redis.find(':').unwrap();
             let redis_host = &redis[..split];
             let redis_port = &redis[split + 1..];
 
-            //Run it with a default set of commands
-            let mut command = vec![
-                "python3",
-                "main.py",
-                &module.name,
-                &module.version,
-                "--redis_host",
-                redis_host,
-                "--port",
-                redis_port,
-            ];
-            //Use test keys in laps.py if running in test mode
-            if cfg!(test) {
-                command.push("--test");
-            }
+            for worker_number in (0..concurrent_workers).map(|w| w.to_string()) {
+                //Run it with a default set of commands
+                let mut command = vec![
+                    "python3",
+                    "main.py",
+                    &module.name,
+                    &module.version,
+                    "--redis_host",
+                    redis_host,
+                    "--port",
+                    redis_port,
+                    "--worker_number",
+                    &worker_number,
+                ];
+                //Use test keys in laps.py if running in test mode
+                if cfg!(test) {
+                    command.push("--test");
+                }
 
-            //Setup the settings
-            let module_name = module.to_string();
-            let host_config = HostConfig {
-                network_mode: Some("host"),
-                ..Default::default()
-            };
-            let config = Config {
-                image: Some(module_name.as_str()),
-                cmd: Some(command),
-                host_config: Some(host_config),
-                stop_signal: Some("SIGINT"),
-                ..Default::default()
-            };
-            let options = CreateContainerOptions {
-                name: &container_name,
-            };
-            //Print any warnings
-            let result = docker.create_container(Some(options), config).await?;
-            debug!(
-                "Successfully created container with name {}:{}",
-                container_name, result.id
-            );
-            let id = &result.id;
-            if let Some(w) = result.warnings {
-                w.into_iter().for_each(|w| warn!("Container {}: {}", id, w));
+                //Setup the settings
+                let module_name = module.to_string();
+                let host_config = HostConfig {
+                    network_mode: Some("host"),
+                    ..Default::default()
+                };
+                let config = Config {
+                    image: Some(module_name.as_str()),
+                    cmd: Some(command),
+                    host_config: Some(host_config),
+                    stop_signal: Some("SIGINT"),
+                    ..Default::default()
+                };
+                let this_worker_name = format!("{}-{}", container_name, worker_number);
+                let options = CreateContainerOptions {
+                    name: &this_worker_name,
+                };
+                //Print any warnings
+                let result = docker.create_container(Some(options), config).await?;
+                debug!(
+                    "Successfully created container {}:{}",
+                    this_worker_name, result.id
+                );
+                let id = &result.id;
+                if let Some(w) = result.warnings {
+                    w.into_iter().for_each(|w| warn!("Container {}: {}", id, w));
+                }
             }
         }
 
-        //Fire this sucker up~
-        docker
-            .start_container(&container_name, None::<StartContainerOptions<String>>)
-            .await?;
-
+        //Finally start all the containers:
+        for worker_number in 0..concurrent_workers {
+            let this_worker_name = format!("{}-{}", container_name, worker_number);
+            docker
+                .start_container(&this_worker_name, None::<StartContainerOptions<String>>)
+                .await?;
+            debug!("Successfully started container {}", this_worker_name);
+        }
         info!(
             "{} successfully started module {}",
             session.username, module
@@ -431,6 +508,7 @@ pub async fn stop_module(
     name: String,
     version: String,
     docker: State<'_, Docker>,
+    pool: State<'_, ConnectionPool>,
 ) -> Result<Status, BackendError> {
     //If the module doesn't exist, 404
     let module = ModuleInfo { name, version };
@@ -444,19 +522,35 @@ pub async fn stop_module(
         } else {
             let options = StopContainerOptions { t: 60 };
             let container = module.to_string().replace(":", "-");
-            match docker.stop_container(&container, Some(options)).await {
-                Ok(_) => {
-                    info!("Module {} stopped by {}", container, session.username);
-                    Ok(Status::NoContent)
-                }
-                Err(e) => {
-                    error!(
-                        "Failed attempt to stop {} by {}: {:?}",
-                        container, session.username, e
-                    );
-                    Err(BackendError::Docker(e))
+            let mut conn = pool.get().await;
+            let num_workers = String::from_utf8_lossy(
+                &conn
+                    .get(util::get_module_workers_key(&module))
+                    .await?
+                    .expect("getting number of workers"),
+            )
+            .parse::<u8>()
+            .unwrap();
+            for worker in 0..num_workers {
+                let worker_container = format!("{}-{}", container, worker);
+                match docker
+                    .stop_container(&worker_container, Some(options))
+                    .await
+                {
+                    Ok(_) => {
+                        debug!("Stopped container {}", worker_container);
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed attempt to stop {} by {}: {:?}",
+                            container, session.username, e
+                        );
+                        return Err(BackendError::Docker(e));
+                    }
                 }
             }
+            info!("module {} stopped by {}", container, session.username);
+            Ok(Status::NoContent)
         }
     }
 }

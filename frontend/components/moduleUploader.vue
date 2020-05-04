@@ -15,6 +15,10 @@
       >Version:
       <input type="text" name="version" v-model="input.version" /></label
     ><br />
+    <label
+      >Worker count(uses much more server ram!):
+      <input type="number" min="1" max="8" v-model="input.workers" /> </label
+    ><br />
     <button v-on:click="submit()">Submit</button>
   </div>
 </template>
@@ -30,6 +34,7 @@ export default {
       input: {
         name: "",
         version: "",
+        workers: 1,
       },
     };
   },
@@ -52,6 +57,7 @@ export default {
       let formData = new FormData();
       formData.append("name", this.input.name);
       formData.append("version", this.input.version);
+      formData.append("workers", this.input.workers);
 
       //Need to set the content-type header on the module field, so recreate the file:
       console.log(this.file);

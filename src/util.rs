@@ -75,3 +75,15 @@ pub fn get_job_cache_key(job: &JobSubmission) -> String {
     //We want the key to have the same format every time
     format!("{}.{}", prefix, job.cache_key())
 }
+
+//Get the key where we store the number of workers we can create of this module type.
+pub fn get_module_workers_key(module: &ModuleInfo) -> String {
+    let prefix = create_redis_backend_key("module-workers");
+    format!("{}.{}", prefix, module)
+}
+
+//Get the key where we keep the counter to how many workers are actually running for `module`.
+pub fn get_registered_module_workers_key(module: &ModuleInfo) -> String {
+    let prefix = get_module_workers_key(module);
+    format!("{}.active", prefix)
+}

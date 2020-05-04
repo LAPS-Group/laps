@@ -55,7 +55,11 @@ pub async fn clean_docker(docker: &Docker) {
         force: true,
         ..Default::default()
     };
-    for container in &["laps-test-0.1.0", "laps-failing-test-0.1.0"] {
+    for container in &[
+        "laps-test-0.1.0-0",
+        "laps-test-0.1.0-1",
+        "laps-failing-test-0.1.0-0",
+    ] {
         match docker.remove_container(container, Some(options)).await {
             Ok(_) => println!("Found and deleted old test container {}", container),
             Err(e) => println!("Did not remove old test container: {}", e),
@@ -70,8 +74,11 @@ pub async fn upload_test_image<'a>(
     tarball: &'a [u8],
     name: &'a str,
     version: &'a str,
+    workers: Option<u8>,
 ) -> LocalResponse<'a> {
-    let mut multipart = Multipart::new()
+    //Create the multipart form with the optional worker field.
+    let mut multipart = Multipart::new();
+    multipart
         .add_stream::<&str, &[u8], &str>(
             "module",
             tarball,
@@ -79,13 +86,16 @@ pub async fn upload_test_image<'a>(
             Some("application/x-tar".parse().unwrap()),
         )
         .add_text("version", version)
-        .add_text("name", name)
-        .prepare()
-        .unwrap();
+        .add_text("name", name);
+    if let Some(w) = workers {
+        multipart.add_text("workers", w.to_string());
+    }
+
+    //Finalise the form and send it
+    let mut multipart = multipart.prepare().unwrap();
     let mut form = Vec::new();
     let boundary = multipart.boundary().to_string();
     multipart.read_to_end(&mut form).unwrap();
-
     let mut request = client
         .post("/module")
         .header(ContentType::with_params(

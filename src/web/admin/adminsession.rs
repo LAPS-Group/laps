@@ -7,7 +7,7 @@ use rocket::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AdminSession {
     pub username: String,
     pub is_super: bool,
