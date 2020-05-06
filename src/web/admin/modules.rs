@@ -61,13 +61,16 @@ pub async fn get_module_logs<'a>(
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+//Enum describing the state of a module or container.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "state")]
 pub enum ModuleState {
     Running,
     Stopped,
     Failed { exit_code: i32 },
+    //A module that is partially stopped or failed.
+    Other { message: String },
 }
 
 //Return value for the module structs, with an additional field to determine if a module is currently running.
@@ -163,7 +166,12 @@ fn get_container_state(container: &APIContainers) -> ModuleState {
                 let second_par = container.status[p..].find(')').unwrap();
                 //Extract the code itself from the string.
                 let exit_code: i32 = container.status[p + 1..p + second_par].parse().unwrap();
-                ModuleState::Failed { exit_code }
+                //Following UNIX conventions, a 0 exit value indicates success
+                if exit_code == 0 {
+                    ModuleState::Stopped
+                } else {
+                    ModuleState::Failed { exit_code }
+                }
             } else {
                 //We should always be able to find the parenthesis, but if it fails,
                 //just ignore the error and say that it's stopped, because that is still correct.
@@ -207,18 +215,73 @@ pub async fn get_all_modules(
                     continue;
                 }
 
-                //Look for a container associated with this image.
-                let state = match all_modules.iter().find(|(m, _)| m == &module) {
-                    Some((_, container)) => {
-                        //Found a container. Check it's state to return the proper status.
-                        get_container_state(&container)
+                //Get the state of all containers with this tag, i.e all containers created from the same module image.
+                //And fold it into  a containerstates struct.
+                let mut states: Vec<ModuleState> = all_modules
+                    .iter()
+                    .filter_map(|(m, container)| {
+                        if m == &module {
+                            Some(get_container_state(&container))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                //If we found no containers, the module was never started.
+                let state = if states.is_empty() {
+                    ModuleState::Stopped
+                } else {
+                    //If all containers have the same state we can just forward that.
+                    let last = states.first().unwrap(); // already did the bounds check.
+                    if states.iter().all(|s| s == last) {
+                        last.clone()
+                    } else {
+                        //If not we have to build the response string.
+                        //Struct containing the state of all the containers.
+                        #[derive(Default)]
+                        struct ContainerStates {
+                            running: i32,
+                            stopped: i32,
+                            failed: i32,
+                            exit_codes: Vec<i32>,
+                        };
+                        let mut states = states.into_iter().fold(
+                            ContainerStates::default(),
+                            |mut acc, state| {
+                                match state {
+                                    ModuleState::Running => acc.running += 1,
+                                    ModuleState::Stopped => acc.stopped += 1,
+                                    ModuleState::Failed { exit_code } => {
+                                        acc.failed += 1;
+                                        acc.exit_codes.push(exit_code);
+                                    }
+                                    //The only way for this to happen is if the get_container_state function is broken
+                                    _ => unreachable!(),
+                                }
+                                acc
+                            },
+                        );
+                        //Avoid duplicates in the exit codes
+                        states.exit_codes.sort_unstable();
+                        states.exit_codes.dedup();
+
+                        //Convert the states into a nice string
+                        let workers = states.running + states.stopped + states.failed;
+                        let mut message = format!("{}/{} running", states.running, workers);
+                        if states.stopped > 0 {
+                            message += &format!(", {} stopped", states.stopped);
+                        }
+                        if states.failed > 0 {
+                            message += &format!(
+                                ", {} failures with exit codes {:?}",
+                                states.failed, states.exit_codes
+                            );
+                        }
+                        ModuleState::Other { message }
                     }
-                    //If there's no container associated with the image, it simply hasn't been created yet,
-                    //and we can just say that it's stopped.
-                    None => ModuleState::Stopped,
                 };
 
-                out.push(PathModule { state, module });
+                out.push(PathModule { module, state });
             }
         }
     }

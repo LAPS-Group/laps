@@ -3,7 +3,8 @@
     <h2>Module list</h2>
     <ul>
       <li v-for="module in modules">
-        {{ module.name }} {{ module.version }} State: {{ module.state }},
+        {{ module.name }} {{ module.version }} State:
+        {{ getStateString(module) }},
         <a v-bind:href="moduleRoute(module, 'logs')">Logs</a>
         <button v-on:click="restartModule(module)">Restart</button
         ><button v-on:click="stopModule(module)">Stop</button>
@@ -25,6 +26,13 @@ export default {
     this.refreshModules();
   },
   methods: {
+    getStateString(module) {
+      if (module.state === "other") {
+        return module.message;
+      } else {
+        return module.state;
+      }
+    },
     refreshModules: async function () {
       let modules = await axios.get(getRoute("/module/all"), {
         withCredentials: true,
