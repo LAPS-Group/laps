@@ -30,7 +30,7 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
 
         match shutdown {
             Ok(info) => {
-                //Only remove a module from the active module set it *all* the workers are shut down.
+                //Only remove a module from the active module set if *all* the workers are shut down.
                 let remaining_workers = conn
                     .decr(get_registered_module_workers_key(&info))
                     .await
@@ -69,7 +69,7 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
                     conn.rpush_slice(&results_key, &results).await.unwrap();
                 }
 
-                info!("Cancelled {} jobs from {}'s job queue", results.len(), info);
+                info!("Canceled {} jobs from {}'s job queue", results.len(), info);
 
                 //Also delete the entire job cache for the module, so that every new job submitted to the module will
                 //get rejected instead of giving a potentially confusing cancellation message every time.

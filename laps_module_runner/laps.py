@@ -59,6 +59,19 @@ class Runner:
             self.ident
         )
 
+    # Get the map data from a job. 
+    def get_map_data(self, job):
+        data = self.redis.hget("laps.mapdata.image", job["map_id"])
+        if data is None:
+            raise JobFailure("Map {} is missing!".format(job["map_id"]))
+        return data
+
+    def get_map_metadata(self, job):
+        data = self.redis.hget("laps.mapdata.meta", job["map_id"])
+        if data is None:
+            raise JobFailure("Map {} metadata is missing!".format(job["map_id"]))
+        return json.loads(data)
+
     # Register self as a module in the system.
     def register_module(self):
         ident = json.dumps({
@@ -151,8 +164,6 @@ class Runner:
             return "laps.testing.backend.{}".format(name)
         else:
             return "laps.backend.{}".format(name)
-
-        
 
     def __log(self, level, message):
         def loglevel_to_escape(level):
