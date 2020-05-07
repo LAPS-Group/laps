@@ -71,6 +71,10 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
                             conn.rpush_slice(&results_key, &results).await.unwrap();
                         }
 
+                        //Delete the job queue such that if the module is started again, it does not try to do these
+                        //stale jobs.
+                        conn.del(&work_key).await.unwrap();
+
                         info!("Canceled {} jobs from {}'s job queue", results.len(), info);
 
                         //Also delete the entire job cache for the module, so that every new job submitted to the module will
