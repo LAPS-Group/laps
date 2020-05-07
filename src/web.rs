@@ -40,6 +40,7 @@ pub async fn run() {
             "/",
             routes![
                 admin::delete_map,
+                admin::delete_module,
                 admin::get_all_modules,
                 admin::get_me,
                 admin::get_module_logs,

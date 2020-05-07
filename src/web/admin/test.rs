@@ -857,3 +857,92 @@ async fn concurrent_module_start() {
     assert!(containers.contains(&"/laps-test-0.1.0-0".to_string()));
     assert!(containers.contains(&"/laps-test-0.1.0-1".to_string()));
 }
+
+//Test that a module can be deleted.
+#[tokio::test]
+#[serial]
+async fn module_deletion() {
+    //setup rocket instance
+    let redis = crate::create_redis_pool().await;
+    let docker = crate::connect_to_docker().await;
+    let rocket = rocket::ignite()
+        .mount(
+            "/",
+            routes![
+                login,
+                upload_module,
+                register_super_admin,
+                restart_module,
+                stop_module,
+                delete_module
+            ],
+        )
+        .manage(redis.clone())
+        .manage(crate::connect_to_docker().await);
+    let client = Client::new(rocket).unwrap();
+    let mut conn = redis.get().await;
+    crate::test::clear_redis(&mut conn).await;
+    crate::test::clean_docker(&docker).await;
+    let cookies = create_test_account_and_login(&client).await;
+
+    let module = ModuleInfo {
+        name: "laps-test".into(),
+        version: "0.1.0".into(),
+    };
+
+    //Try to delete the module, which hasn't been created yet so it should fail
+    let response = client
+        .delete(format!("/module/{}/{}", module.name, module.version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NotFound);
+
+    //Upload and start a module.
+    let response = crate::test::upload_test_image(
+        &client,
+        &cookies,
+        crate::test::TEST_CONTAINER,
+        &module.name,
+        &module.version,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), Status::Created);
+    let response = client
+        .post(format!(
+            "/module/{}/{}/restart",
+            module.name, module.version
+        ))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::Created);
+
+    //Try to delete the module, which should fail, because the module is running
+    let mut response = client
+        .delete(format!("/module/{}/{}", module.name, module.version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::BadRequest);
+    assert_eq!(
+        response.body_string().await.unwrap(),
+        "Cannot delete a running module!".to_string()
+    );
+
+    //Stop the module, delete it, and verify that the module is deleted:
+    let response = client
+        .post(format!("/module/{}/{}/stop", module.name, module.version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
+    let response = client
+        .delete(format!("/module/{}/{}", module.name, module.version))
+        .cookies(cookies.clone())
+        .dispatch()
+        .await;
+    assert_eq!(response.status(), Status::NoContent);
+    assert!(!module_exists(&docker, &module).await.unwrap());
+}

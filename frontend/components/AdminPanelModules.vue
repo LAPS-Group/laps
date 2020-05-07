@@ -7,7 +7,8 @@
         {{ getStateString(module) }},
         <a v-bind:href="moduleRoute(module, 'logs')">Logs</a>
         <button v-on:click="restartModule(module)">Restart</button
-        ><button v-on:click="stopModule(module)">Stop</button>
+        ><button v-on:click="stopModule(module)">Stop</button
+        ><button v-on:click="deleteModule(module)">Delete</button>
       </li>
     </ul>
   </div>
@@ -57,6 +58,13 @@ export default {
         alert("Failed to restart module: " + err);
       });
       this.refreshModules();
+    },
+    deleteModule: function (module) {
+      let url = getRoute("/module/") + module.name + "/" + module.version;
+      axios.delete(url, { withCredentials: true }).catch(function (err) {
+        alert("Failed to delete module: " + err);
+      });
+      this.refreshmodules();
     },
   },
 };

@@ -8,10 +8,15 @@ use crate::{
 };
 use bollard::{
     container::{
-        APIContainers, Config, CreateContainerOptions, HostConfig, ListContainersOptions,
-        RestartContainerOptions, StartContainerOptions, StopContainerOptions,
+        APIContainers, Config, CreateContainerOptions, HostConfig, InspectContainerOptions,
+        ListContainersOptions, RemoveContainerOptions, RestartContainerOptions,
+        StartContainerOptions, StopContainerOptions,
     },
-    image::{APIImages, BuildImageOptions, BuildImageResults, ListImagesOptions},
+    errors::ErrorKind,
+    image::{
+        APIImages, BuildImageOptions, BuildImageResults, ListImagesOptions, RemoveImageOptions,
+        RemoveImageResults,
+    },
     Docker,
 };
 use darkredis::ConnectionPool;
@@ -615,4 +620,86 @@ pub async fn stop_module(
             Ok(Status::NoContent)
         }
     }
+}
+
+#[delete("/module/<name>/<version>")]
+pub async fn delete_module(
+    session: AdminSession,
+    name: String,
+    version: String,
+    docker: State<'_, Docker>,
+    pool: State<'_, ConnectionPool>,
+) -> Result<Response<'static>, BackendError> {
+    //Refuse to delete a module if it does not exist or is currently running
+    let module = ModuleInfo { name, version };
+    if !module_exists(&docker, &module).await? {
+        return Ok(Response::build().status(Status::NotFound).finalize());
+    }
+    if module_is_running(&docker, &module).await? {
+        return Ok(Response::build()
+            .status(Status::BadRequest)
+            .sized_body(Cursor::new("Cannot delete a running module!"))
+            .await
+            .finalize());
+    }
+
+    //Now we can delete the module. First off, the containers have to be deleted.
+
+    //Assume that if the first container exists that the rest do.
+    let result = docker
+        .inspect_container(
+            &format!("{}-{}-0", module.name, module.version),
+            None::<InspectContainerOptions>,
+        )
+        .await;
+    let containers_exist = match result {
+        Ok(_) => true,
+        Err(e) => match e.kind() {
+            ErrorKind::DockerResponseNotFoundError { .. } => false,
+            _ => return Err(BackendError::Docker(e)),
+        },
+    };
+
+    if containers_exist {
+        let workers = {
+            let mut conn = pool.get().await;
+            conn.get(util::get_module_workers_key(&module))
+                .await
+                .expect("getting desired worker count")
+                .map(|s| String::from_utf8_lossy(&s).parse::<u8>().unwrap())
+                .unwrap()
+        };
+        for w in 0..workers {
+            let this_container = format!("{}-{}-{}", module.name, module.version, w);
+            docker
+                .remove_container(&this_container, None::<RemoveContainerOptions>)
+                .await?;
+            debug!("Removed container {}", this_container);
+        }
+    }
+    //Get the number of workers for this module
+    let options = RemoveImageOptions {
+        force: true,
+        noprune: false,
+    };
+    let image_deletions = docker
+        .remove_image(&module.to_string(), Some(options), None)
+        .await?;
+    //Output the deletions if debug log is active
+    if log_enabled!(log::Level::Debug) {
+        for deletion in image_deletions {
+            match deletion {
+                RemoveImageResults::RemoveImageUntagged { untagged } => {
+                    debug!("Untagged {}", untagged);
+                }
+                RemoveImageResults::RemoveImageDeleted { deleted } => {
+                    debug!("Deleted {}", deleted);
+                }
+            }
+        }
+    }
+
+    info!("Module {} deleted by {}", module, session.username);
+
+    Ok(Response::build().status(Status::NoContent).finalize())
 }
