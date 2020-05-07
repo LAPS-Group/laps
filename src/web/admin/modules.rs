@@ -217,7 +217,7 @@ pub async fn get_all_modules(
 
                 //Get the state of all containers with this tag, i.e all containers created from the same module image.
                 //And fold it into  a containerstates struct.
-                let mut states: Vec<ModuleState> = all_modules
+                let states: Vec<ModuleState> = all_modules
                     .iter()
                     .filter_map(|(m, container)| {
                         if m == &module {
@@ -444,12 +444,11 @@ pub async fn restart_module(
         //It might take a while to restart a module as it will have to have time to exit.
         //To get around this, perform each restart concurrently.
         futures::stream::iter(0..concurrent_workers)
-            .map(|n| Ok(n))
+            .map(Ok)
             .try_for_each_concurrent(None, |n| {
                 let docker = docker.clone();
                 let session = session.clone();
                 let module = module.clone();
-                let n = n.clone();
                 let container_name = format!("{}-{}", container_name, n);
                 async move {
                     trace!("Restarting {} worker {}", session.username, &module);

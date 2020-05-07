@@ -30,76 +30,80 @@ async fn unregister_loop(pool: darkredis::ConnectionPool) {
 
         match shutdown {
             Ok(info) => {
+                use std::cmp::Ordering;
                 //Only remove a module from the active module set if *all* the workers are shut down.
                 let remaining_workers = conn
                     .decr(get_registered_module_workers_key(&info))
                     .await
                     .unwrap();
-                if remaining_workers > 0 {
-                    info!(
-                        "Worker for module {} shut down, {} workers remaining!",
-                        info, remaining_workers
-                    );
-                    continue;
-                } else if remaining_workers < 0 {
-                    warn!("Remaining {} workers is < 0! {}", info, remaining_workers);
-                }
+                match remaining_workers.cmp(&0) {
+                    Ordering::Greater => {
+                        info!(
+                            "Worker for module {} shut down, {} workers remaining!",
+                            info, remaining_workers
+                        );
+                    }
+                    Ordering::Less => {
+                        warn!("Remaining {} workers is < 0! {}", info, remaining_workers);
+                    }
+                    Ordering::Equal => {
+                        info!("Module {} shut down", info);
 
-                info!("Module {} shut down", info);
+                        //Now that the module is shut down, cancel any job it may have queued up.
+                        let work_key = get_module_work_key(&info);
+                        let results_key = create_redis_backend_key("path-results");
+                        let results: Vec<Vec<u8>> = conn
+                            .lrange(&work_key, 0, -1)
+                            .await
+                            .expect("getting module work queue")
+                            .into_iter()
+                            .map(|s| {
+                                let job = serde_json::from_slice::<JobInfo>(&s).unwrap();
+                                serde_json::to_vec(&JobResult {
+                                    job_id: job.job_id,
+                                    outcome: JobOutcome::Cancelled,
+                                    points: Vec::new(),
+                                })
+                                .unwrap()
+                            })
+                            .collect();
+                        if !results.is_empty() {
+                            conn.rpush_slice(&results_key, &results).await.unwrap();
+                        }
 
-                //Now that the module is shut down, cancel any job it may have queued up.
-                let work_key = get_module_work_key(&info);
-                let results_key = create_redis_backend_key("path-results");
-                let results: Vec<Vec<u8>> = conn
-                    .lrange(&work_key, 0, -1)
-                    .await
-                    .expect("getting module work queue")
-                    .into_iter()
-                    .map(|s| {
-                        let job = serde_json::from_slice::<JobInfo>(&s).unwrap();
-                        serde_json::to_vec(&JobResult {
-                            job_id: job.job_id,
-                            outcome: JobOutcome::Cancelled,
-                            points: Vec::new(),
-                        })
-                        .unwrap()
-                    })
-                    .collect();
-                if !results.is_empty() {
-                    conn.rpush_slice(&results_key, &results).await.unwrap();
-                }
+                        info!("Canceled {} jobs from {}'s job queue", results.len(), info);
 
-                info!("Canceled {} jobs from {}'s job queue", results.len(), info);
+                        //Also delete the entire job cache for the module, so that every new job submitted to the module will
+                        //get rejected instead of giving a potentially confusing cancellation message every time.
+                        let pattern = create_redis_backend_key(&format!("cache.{}.*", info)); //cache key always starts with the module info first.
+                        let caches = conn
+                            .scan()
+                            .pattern(&pattern)
+                            .run()
+                            .collect::<Vec<Vec<u8>>>()
+                            .await;
+                        if !caches.is_empty() {
+                            conn.del_slice(&caches)
+                                .await
+                                .expect("deleting cache entries");
+                        }
+                        info!(
+                            "Deleted {} cache entries which came from {}",
+                            caches.len(),
+                            info
+                        );
 
-                //Also delete the entire job cache for the module, so that every new job submitted to the module will
-                //get rejected instead of giving a potentially confusing cancellation message every time.
-                let pattern = create_redis_backend_key(&format!("cache.{}.*", info)); //cache key always starts with the module info first.
-                let caches = conn
-                    .scan()
-                    .pattern(&pattern)
-                    .run()
-                    .collect::<Vec<Vec<u8>>>()
-                    .await;
-                if !caches.is_empty() {
-                    conn.del_slice(&caches)
-                        .await
-                        .expect("deleting cache entries");
-                }
-                info!(
-                    "Deleted {} cache entries which came from {}",
-                    caches.len(),
-                    info
-                );
-
-                //Remove from the registered_modules set.
-                //Rely on modules sending the exact same shutdown data as they sent registration data.
-                if !conn
-                    .srem(create_redis_backend_key("registered_modules"), &data)
-                    .await
-                    .expect("Removing from registered-modules set")
-                {
-                    error!("Module {} {} wasn't registered!", info.name, info.version);
-                    trace!("Raw module info: {}", String::from_utf8_lossy(&data));
+                        //Remove from the registered_modules set.
+                        //Rely on modules sending the exact same shutdown data as they sent registration data.
+                        if !conn
+                            .srem(create_redis_backend_key("registered_modules"), &data)
+                            .await
+                            .expect("Removing from registered-modules set")
+                        {
+                            error!("Module {} {} wasn't registered!", info.name, info.version);
+                            trace!("Raw module info: {}", String::from_utf8_lossy(&data));
+                        }
+                    }
                 }
             }
             Err(e) => error!("Couldn't parse shutdown message: {}", e),
@@ -219,15 +223,8 @@ pub async fn log_listener(pool: darkredis::ConnectionPool) {
 }
 
 //Listen for and handle registration of new modules
-pub async fn run(pool: darkredis::ConnectionPool) {
+async fn registration_loop(pool: darkredis::ConnectionPool) {
     let mut conn = pool.spawn("module-registration").await.unwrap();
-
-    //Run the unregistration loop
-    tokio::spawn(unregister_loop(pool.clone()));
-    //Run the results listener
-    tokio::spawn(result_listener(pool.clone()));
-    //run the log listener
-    tokio::spawn(log_listener(pool.clone()));
 
     loop {
         let (_, data) = &conn
@@ -269,6 +266,18 @@ pub async fn run(pool: darkredis::ConnectionPool) {
             );
         }
     }
+}
+
+//Launch the module handling loops.
+pub async fn run(pool: darkredis::ConnectionPool) {
+    //Run the registration loop
+    tokio::spawn(registration_loop(pool.clone()));
+    //Run the unregistration loop
+    tokio::spawn(unregister_loop(pool.clone()));
+    //Run the results listener
+    tokio::spawn(result_listener(pool.clone()));
+    //run the log listener
+    tokio::spawn(log_listener(pool.clone()));
 }
 
 //Get a list of every single pathfinding module which has been registered thus far.
@@ -346,7 +355,9 @@ mod test {
         let mut conn = pool.get().await;
         crate::test::clear_redis(&mut conn).await;
         crate::test::insert_test_mapdata(&mut conn).await;
-        tokio::spawn(super::unregister_loop(pool.clone())); //only run deregistration loop
+        //Run the registration and unregistration loops
+        tokio::spawn(super::unregister_loop(pool.clone()));
+        tokio::spawn(super::registration_loop(pool.clone()));
 
         //Make some fake module info. We only need to unregister it.
         let module_info = ModuleInfo {
@@ -356,6 +367,14 @@ mod test {
 
         //How many jobs to submit for the test.
         const JOB_COUNT: i32 = 5;
+
+        //Register ourselves with the system
+        conn.rpush(
+            create_redis_backend_key("register-module"),
+            &serde_json::to_vec(&module_info).unwrap(),
+        )
+        .await
+        .unwrap();
 
         //Submit a bunch of jobs. It doesn't matter that they are all the same because the
         //Input validation is done in the web code.
@@ -396,7 +415,7 @@ mod test {
         .unwrap();
 
         //Yield for a bit so that the shutdown can be processed
-        tokio::time::delay_for(std::time::Duration::from_millis(100)).await;
+        tokio::time::delay_for(std::time::Duration::from_millis(200)).await;
 
         //Check that each job was cancelled by verifying that the path results backlog is big enough.
         let path_results_key = create_redis_backend_key("path-results");
