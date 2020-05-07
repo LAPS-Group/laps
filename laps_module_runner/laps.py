@@ -38,6 +38,8 @@ class Runner:
         # Redis-py does connection pooling by default
         self.redis = redis.StrictRedis(host=args.redis_host, port=args.port)
 
+        self.registered = False
+
         # Register module
         self.test_mode = args.test
         # set the correct log key in test mode
@@ -54,10 +56,11 @@ class Runner:
 
     # Handle module shutdown on scope exit
     def __exit__(self, _exc_type, _exc_value, _traceback):
-        self.redis.rpush(
-            self.create_backend_redis_key("module-shutdown"),
-            self.ident
-        )
+        if self.registered:
+            self.redis.rpush(
+                self.create_backend_redis_key("module-shutdown"),
+                self.ident
+            )
 
     # Get the map data from a job. 
     def get_map_data(self, job):
@@ -73,7 +76,7 @@ class Runner:
         return json.loads(data)
 
     # Register self as a module in the system.
-    def register_module(self):
+    def __register_module(self):
         ident = json.dumps({
             "name": self.name,
             "version": self.version
@@ -85,11 +88,12 @@ class Runner:
             ident
         )
         self.log_info("Registered as {0}:{1}".format(self.name, self.version))
+        self.registered = True
 
     # Main module loop
     def run(self, handler):
         # Register self here as ready to accept jobs.
-        self.register_module()
+        self.__register_module()
 
         global g_running
         blocking = True
