@@ -59,7 +59,7 @@ class Runner:
     def __exit__(self, exc_type, exc_value, tb):
         if self.registered:
             self.redis.rpush(
-                self.create_backend_redis_key("module-shutdown"),
+                self.__create_backend_redis_key("module-shutdown"),
                 self.ident
             )
         if exc_type is not SystemExit and exc_type is not None:
@@ -90,7 +90,7 @@ class Runner:
         self.ident = ident
 
         self.redis.rpush(
-            self.create_backend_redis_key("register-module"),
+            self.__create_backend_redis_key("register-module"),
             ident
         )
         self.log_info("Registered as {0}:{1}".format(self.name, self.version))
@@ -139,7 +139,7 @@ class Runner:
                     "points": result
                 }
                 self.redis.lpush(
-                    self.create_backend_redis_key("path-results"),
+                    self.__create_backend_redis_key("path-results"),
                     json.dumps(response)
                 )
                 self.log_info("Completed job {}".format(job_id))
@@ -154,14 +154,13 @@ class Runner:
 
             except Exception as exp:
                 # An unexpected failure from the module
-                message = "Unexpected handler exception: type: {0} contents: {1}".format(type(exp), exp)
-                self.log_error(message)
+                # Fail the job and rethrow the exception
                 self.__fail_job(job_id)
-                break
+                raise exp
 
     def __fail_job(self, job_id):
         message = {"job_id": job_id, "outcome": "failure"}
-        self.redis.lpush(self.create_backend_redis_key("path-results"), json.dumps(message))
+        self.redis.lpush(self.__create_backend_redis_key("path-results"), json.dumps(message))
 
     def create_redis_key(self, name):
         prefix = "laps.runner"
@@ -169,7 +168,7 @@ class Runner:
             prefix = "laps.testing.runner"
         return "{0}.{1}:{2}.{3}".format(prefix, self.name, self.version, name)
 
-    def create_backend_redis_key(self, name):
+    def __create_backend_redis_key(self, name):
         if self.test_mode:
             return "laps.testing.backend.{}".format(name)
         else:
