@@ -3,6 +3,7 @@ import json
 import signal, sys
 import time
 from datetime import datetime
+import traceback
 
 # Re-usable command line arguments for LAPS modules. Mostly useful for the backend, and perhaps while
 # testing if a module is working.
@@ -55,12 +56,17 @@ class Runner:
         return self
 
     # Handle module shutdown on scope exit
-    def __exit__(self, _exc_type, _exc_value, _traceback):
+    def __exit__(self, exc_type, exc_value, tb):
         if self.registered:
             self.redis.rpush(
                 self.create_backend_redis_key("module-shutdown"),
                 self.ident
             )
+        if exc_type is not SystemExit and exc_type is not None:
+            if traceback is not None:
+                string = ''.join(traceback.format_exception(exc_type, exc_value, tb))
+                self.log_error(string)
+            
 
     # Get the map data from a job. 
     def get_map_data(self, job):
