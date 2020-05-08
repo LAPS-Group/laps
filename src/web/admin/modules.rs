@@ -659,12 +659,12 @@ pub async fn delete_module(
             _ => return Err(BackendError::Docker(e)),
         },
     };
-    let module_workers_key = util::get_module_workers_key(&module);
-    //Delete the containers if they exist
+
+    //Delete the containers if they exist.
     if containers_exist {
         let workers = {
             let mut conn = pool.get().await;
-            conn.get(&module_workers_key)
+            conn.get(util::get_module_workers_key(&module))
                 .await
                 .expect("getting desired worker count")
                 .map(|s| String::from_utf8_lossy(&s).parse::<u8>().unwrap())
@@ -678,10 +678,21 @@ pub async fn delete_module(
             debug!("Removed container {}", this_container);
         }
     }
-    //delete the module_workers database entry.
-    pool.get().await.del(module_workers_key).await?;
 
-    //Finally remove the image itself
+    //Remove all traces of the module from the database.
+    {
+        let mut conn = pool.get().await;
+        let keys = vec![
+            util::get_module_log_key(&module),
+            util::get_module_workers_key(&module),
+            util::get_registered_module_workers_key(&module),
+            util::get_module_work_key(&module),
+        ];
+        let deleted = conn.del_slice(&keys).await?;
+        debug!("Removed {} database entries related to {}", deleted, module);
+    }
+
+    //Get the number of workers for this module
     let options = RemoveImageOptions {
         force: true,
         noprune: false,
