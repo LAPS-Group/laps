@@ -7,8 +7,17 @@
         {{ getStateString(module) }},
         <a v-bind:href="moduleRoute(module, 'logs')">Logs</a>
         <button v-on:click="restartModule(module)">Restart</button
-        ><button v-on:click="stopModule(module)">Stop</button
-        ><button v-on:click="deleteModule(module)">Delete</button>
+        ><button
+          v-on:click="stopModule(module)"
+          v-if="module.state !== 'stopped'"
+        >
+          Stop</button
+        ><button
+          v-on:click="deleteModule(module)"
+          v-if="module.state !== 'running'"
+        >
+          Delete
+        </button>
       </li>
     </ul>
   </div>
