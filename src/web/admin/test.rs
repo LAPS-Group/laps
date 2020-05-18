@@ -1,3 +1,8 @@
+//src/web/admin/test.rs: All admin panel tests.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use super::*;
 use crate::{module_handling::ModuleInfo, util};
 use bollard::container::ListContainersOptions;

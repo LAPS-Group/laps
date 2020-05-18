@@ -1,3 +1,8 @@
+//src/web/algorithms.rs: List algorithm endpoint.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::{module_handling::ModuleInfo, types::BackendError};
 use darkredis::ConnectionPool;
 use rocket::State;

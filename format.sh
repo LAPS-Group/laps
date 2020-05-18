@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# format.sh: Fix or check the formatting of frontend code
+# Author: Håkon Jordet
+# Copyright (c) 2020 LAPS Group
+# Distributed under the zlib licence, see LICENCE.
+
 files=$(find frontend -iname '*.css' -or -iname '*.html' -or -iname '*.js' -or -iname '*.vue')
 
 echo "Found $files"

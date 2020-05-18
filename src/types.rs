@@ -1,3 +1,8 @@
+//src/types.rs: Various types used all around the backend.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::web::multipart::FormError;
 use rocket::{
     http::Status,

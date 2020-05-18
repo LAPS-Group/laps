@@ -1,3 +1,8 @@
+//src/web.rs: Module for all the web code. Entrypoint for the web code.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use rocket::response::NamedFile;
 use rocket_contrib::serve::StaticFiles;
 

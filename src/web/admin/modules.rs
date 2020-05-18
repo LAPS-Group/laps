@@ -1,3 +1,8 @@
+//src/web/admin/modules.rs: Admin module management endpoints
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use super::mime_consts;
 use super::AdminSession;
 use crate::{

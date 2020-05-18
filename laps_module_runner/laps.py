@@ -1,3 +1,8 @@
+# laps_module_runner/laps.py: Pathfinding module library
+# Author: Håkon Jordet
+# Copyright (c) 2020 LAPS Group
+# Distributed under the zlib licence, see LICENCE.
+
 import redis
 import json
 import signal, sys

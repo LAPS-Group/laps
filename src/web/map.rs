@@ -1,3 +1,8 @@
+//src/web/map.rs: Map related REST endpoints.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::{types::BackendError, util::create_redis_key};
 use rocket::{http::ContentType, Response, State};
 use rocket_contrib::{json, json::JsonValue};

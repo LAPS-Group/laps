@@ -1,3 +1,8 @@
+//src/web/admin.rs: Module containing all administration code
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use rocket::response::{NamedFile, Redirect};
 use rocket_contrib::json::Json;
 

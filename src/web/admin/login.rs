@@ -1,3 +1,8 @@
+//src/web/admin/login.rs: Admin login and registration endpoints.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use super::AdminSession;
 use crate::{types::BackendError, util};
 use darkredis::{Command, Connection, ConnectionPool, MSetBuilder, Value};

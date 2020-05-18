@@ -1,3 +1,8 @@
+# shell.nix: Dependency management with the nix package manager.
+# Author: Håkon Jordet
+# Copyright (c) 2020 LAPS Group
+# Distributed under the zlib licence, see LICENCE.
+
 { pkgs ? import <nixpkgs> {} }:
 pkgs.stdenv.mkDerivation {
   name = "laps-shell";

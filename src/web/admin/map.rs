@@ -1,3 +1,8 @@
+//src/web/admin/map.rs: Admin map manipulation endpoints
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use super::mime_consts;
 use super::AdminSession;
 use crate::{

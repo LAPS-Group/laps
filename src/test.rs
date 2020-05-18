@@ -1,3 +1,8 @@
+//src/test.rs: Helper functions for the test suite
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 //Test utility functions and such
 use bollard::{image::RemoveImageOptions, Docker};
 use multipart::client::lazy::Multipart;

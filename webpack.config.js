@@ -1,3 +1,8 @@
+// webpack.config.js: Webpack configuration file
+// Authors: Håkon Jordet, Even Thonhaugen Røraas
+// Copyright (c) 2020 LAPS Group
+// Distributed under the zlib licence, see LICENCE.
+
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const path = require("path");
 const VueLoaderPlugin = require("vue-loader/lib/plugin");

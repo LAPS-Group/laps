@@ -1,3 +1,8 @@
+//src/web/multipart.rs: Wrapper around the `multipart` crate to make it easier to use.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::types::{BackendError, UserError};
 use mime::Mime;
 use multipart::server::Multipart;

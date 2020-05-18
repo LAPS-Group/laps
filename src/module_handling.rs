@@ -1,3 +1,8 @@
+//src/module_handling.rs: Module message handling
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::{
     types::{BackendError, JobOutcome, JobResult},
     util::{

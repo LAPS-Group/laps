@@ -1,8 +1,13 @@
 #!/bin/sh
 
-#This script kinda sucks but it's OK because nobody will see it :^)
-#Might be replaceable with a for loop and some trickery but my shell-fu couldn't figure it out
-#before giving up.
+# build-test-data.sh: Package test modules for testing the backend.
+# Author: Håkon Jordet
+# Copyright (c) 2020 LAPS Group
+# Distributed under the zlib licence, see LICENCE.
+
+# This script kinda sucks but it's OK because nobody will see it :^)
+# Might be replaceable with a for loop and some trickery but my shell-fu couldn't figure it out
+# before giving up.
 
 THIS_DIR=$PWD
 cd $THIS_DIR/test_data/test_modules/simple

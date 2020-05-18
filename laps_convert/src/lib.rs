@@ -1,3 +1,8 @@
+//laps_convert/lib.rs: Entry point for the laps_convert library.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 #![warn(missing_debug_implementations)]
 #![warn(missing_docs)]
 

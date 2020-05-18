@@ -1,3 +1,8 @@
+# config/test.toml: Backend config file for tests
+# Author: Håkon Jordet
+# Copyright (c) 2020 LAPS Group
+# Distributed under the zlib licence, see LICENCE.
+
 # CONFIG FILE USED FOR TESTING
 # Modifying me only has an effect in test mode
 

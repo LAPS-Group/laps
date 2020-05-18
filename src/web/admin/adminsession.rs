@@ -1,3 +1,8 @@
+//src/web/admin/adminsession.rs: Admin session struct and request guard.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::{types::BackendError, util};
 use darkredis::ConnectionPool;
 use rocket::{

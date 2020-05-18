@@ -1,3 +1,8 @@
+//src/util.rs: Different utility functions, mostly Redis key getters.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::{module_handling::ModuleInfo, web::job::JobSubmission};
 use rand::{thread_rng, RngCore};
 

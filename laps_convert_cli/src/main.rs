@@ -1,3 +1,8 @@
+//laps_convert_cli/src/main.rs: Entry point for the laps_convert_cli tool.
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 #[macro_use]
 extern crate log;
 

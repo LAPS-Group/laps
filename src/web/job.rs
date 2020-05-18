@@ -1,3 +1,8 @@
+//src/web/job.rs: Job submission and retrieval
+//Author: Håkon Jordet
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
 use crate::{
     module_handling::ModuleInfo,
     types::{BackendError, JobOutcome, JobResult, Vector},
