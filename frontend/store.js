@@ -11,6 +11,10 @@ export const store = Vue.observable({
     { x: null, y: null },
     { x: null, y: null },
   ],
+  mapOffSetX:null,
+  mapOffSetY:null,
+  startHeight:null,
+  stopHeight:null,
 });
 //function to update a variable
 export const mutations = {
@@ -36,4 +40,16 @@ export const mutations = {
     store.markers[markerNumber].x = x;
     store.markers[markerNumber].y = y;
   },
+  setmapOffSetX(mapOffSetX) {
+    store.mapOffSetX = mapOffSetX;
+  },
+  setmapOffSetY(mapOffSetY) {
+    store.mapOffSetY = mapOffSetY;
+  },
+  setstartHeight(startHeight){
+    store.startHeight = startHeight;
+  },
+  setstartHeight(stopHeight){
+    store.stopHeight = stopHeight;
+  }
 };

@@ -6,8 +6,8 @@
         width="2"
         height="2"
         v-bind:style="{
-          left: recivedCoordinates.points[index].x + 'px',
-          top: recivedCoordinates.points[index].y + 'px',
+          left: recivedCoordinates.points[index].x + mapOffSetX  + 'px',
+          top: recivedCoordinates.points[index].y + mapOffSetY + 'px',
           backgroundColor: colour,
           Zindex: 1,
         }"
@@ -24,6 +24,12 @@ export default {
   computed: {
     recivedCoordinates() {
       return store.recivedCoordinates;
+    },
+    mapOffSetX() {
+      return store.mapOffSetX;
+    },
+    mapOffSetY() {
+      return store.mapOffSetY;
     },
   },
   props: [],

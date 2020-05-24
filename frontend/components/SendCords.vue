@@ -23,6 +23,7 @@ import axios from "axios";
 //used to import data from other components
 import { store, mutations } from "../store.js";
 import { getRoute } from "route";
+import{accumulatedHeight} from "./GetMap.vue";
 
 export default {
   computed: {
@@ -32,8 +33,8 @@ export default {
   },
   data: function () {
     return {
+      //job request
       coordinates: {
-        //coordinates to be sent
         start: { x: null, y: null },
         stop: { x: null, y: null },
         map_id: null,
@@ -78,8 +79,7 @@ export default {
 
       //convert coordinates to JSON
       let message = JSON.stringify(this.coordinates);
-      console.log(message);
-
+      
       //Start the job based on sent information and returns id to fetch result when done
       let res = await axios.post(getRoute("/job"), message, {
         headers: {
@@ -97,8 +97,9 @@ export default {
     getJobResult: async function () {
       try {
         const c = await axios.get(getRoute("/job/" + this.job_token));
-        console.log("Job Done");
+        
         mutations.setrecivedCoordinates(c.data);
+        accumulatedHeight();
       } catch (error) {
         console.log(error);
         //If the error is a time out send a new request
@@ -106,6 +107,8 @@ export default {
           console.log("504:timed out sending new request");
           this.getJobResult();
         }
+        else if (error != 504)
+        {console.log("something went wrong", error)}
       }
     },
     fieldUpdated() {

@@ -35,7 +35,6 @@ export default {
   mounted: async function () {
     //Sends a request for all available algorithms
     this.algorithms_arr = await axios.get(getRoute("/algorithms"));
-    console.log(this.algorithmsRender);
     let i = 0;
     for (i = 0; i < this.algorithms_arr.data.length; i++) {
       let alg =
