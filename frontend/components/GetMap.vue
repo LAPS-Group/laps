@@ -1,3 +1,10 @@
+<!--
+//frontend/components/GetMap.vue: Controls the UI, request and display maps.
+//Author: Even T Røraas
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+-->
+
 <template>
   <div id="getMap">
     <!-- add an input field and adds it vue reactive elements-->

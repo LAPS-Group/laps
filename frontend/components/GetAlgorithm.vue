@@ -1,4 +1,9 @@
-<!-- A fair bit of code belong to the old drop down menu-->
+<!--
+//frontend/components/GetAlgorithm.vue: Controls the UI for the algorithm dropdown menu.
+//Author: Even T Røraas
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+-->
 <template>
   <div id="getAlgorithm">
     Algorithm <br />

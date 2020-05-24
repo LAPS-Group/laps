@@ -1,4 +1,12 @@
-<!-- this is file is used to take input from the user and format it correctly and send to the backend, algorithm and map is gotten from different file, but is add to the request here.-->
+<!--
+//frontend/components/SendCords.vue: Controls the UI for collecting coordsinformation and makes Job request, and handle return responses.
+//Author: Even T Røraas
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+-->
+
+
+
 <template>
   <div id="sendCords">
     <!-- Creates 4 inputs field for coordinates, displays first 2 coordinates recived-->

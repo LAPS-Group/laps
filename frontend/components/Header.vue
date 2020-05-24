@@ -1,3 +1,9 @@
+<!--
+//frontend/components/Header.vue: Displays a header image
+//Author: Even T Røraas
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+-->
 <template>
   <div id="header">
     <img :src="images.Laps" style="width: 20%; height: 20%;" />

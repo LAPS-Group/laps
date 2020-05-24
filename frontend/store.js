@@ -1,3 +1,10 @@
+
+//frontend/store: store variables
+//Author: Even T Røraas
+//Copyright (c) 2020 LAPS Group
+//Distributed under the zlib licence, see LICENCE.
+
+
 import Vue from "vue";
 //store variables
 export const store = Vue.observable({
