@@ -5,8 +5,6 @@
 //Distributed under the zlib licence, see LICENCE.
 -->
 
-
-
 <template>
   <div id="sendCords">
     <!-- Creates 4 inputs field for coordinates, displays first 2 coordinates recived-->
