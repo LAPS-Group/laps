@@ -329,7 +329,7 @@ pub async fn result(
                     Ok(response)
                 }
                 //Not ready yet
-                JobPoll::Pending => Ok(Response::build().status(Status::NoContent).finalize()),
+                JobPoll::Pending => Ok(Response::build().status(Status::GatewayTimeout).finalize()),
             }
         }
         None => Ok(Response::build().status(Status::NotFound).finalize()),
@@ -559,7 +559,7 @@ mod test {
         //Use the real token, but the job times out:
         let uri = format!("/job/{}", token);
         let response = client.get(&uri).dispatch().await;
-        assert_eq!(response.status(), Status::NoContent);
+        assert_eq!(response.status(), Status::GatewayTimeout);
 
         //Complete the job. Because we cleared the job id counter earlier, the job id is guaranteed to be 1.
         let job_id = 1;
