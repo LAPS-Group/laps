@@ -28,7 +28,7 @@
     <!-- creates a new template wich is only displayed if a map is recived-->
 
     <template v-if="pictureRecived == true" style="z-index=1"
-      ><br />
+      >
 
       <div
         ref="map"
@@ -174,8 +174,6 @@ canvas {
   position: absolute;
   top: 0px;
   left: 0px;
-
-  /*background-color: red;*/
   z-index: 1;
 }
 .mapcontainer {
@@ -186,24 +184,8 @@ canvas {
 
 .drop-down {
   display: block;
-  /*font-size: 16px;
-	font-family: sans-serif;
-	font-weight: 700;
-	color: #444;
-	line-height: 1.3;
-	padding: .6em 1.4em .5em .8em;
-  */
+ 
   width: 175px;
-  /*
-	box-sizing: border-box;
-	margin: 0;
-	border: 1px solid #aaa;
-	box-shadow: 0 1px 0 1px rgba(0,0,0,.04);
-	border-radius: .5em;
-	-moz-appearance: none;
-	-webkit-appearance: none;
-	appearance: none;
-	background-color: #fff;
-  */
+ 
 }
 </style>

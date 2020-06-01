@@ -3,6 +3,7 @@ import sendCords from "./components/SendCords.vue";
 import getMap from "./components/GetMap.vue";
 import getAlgorithm from "./components/GetAlgorithm.vue";
 import header from "./components/Header.vue";
+import loginLink from "./components/loginLink.vue";
 
 //Calls send app, its sends coordinates
 new Vue({
@@ -20,4 +21,8 @@ new Vue({
 new Vue({
   el: "#header",
   render: (h) => h(header),
+});
+new Vue({
+  el: "#loginLink",
+  render: (l) => l(loginLink),
 });
