@@ -1,6 +1,5 @@
 //src/main.rs: Backend Entry Point
 //Author: Håkon Jordet
-//Copyright (c) 2020 LAPS Group
 //Distributed under the zlib licence, see LICENCE.
 
 #![feature(proc_macro_hygiene)]
