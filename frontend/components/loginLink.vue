@@ -1,6 +1,6 @@
 <template>
   <div id="loginLink">
-    <button v-on:click="redirect">Admin Panel </button>
+    <button v-on:click="redirect">Admin Panel</button>
   </div>
 </template>
 <script>

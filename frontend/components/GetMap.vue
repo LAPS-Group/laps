@@ -27,9 +27,7 @@
 
     <!-- creates a new template wich is only displayed if a map is recived-->
 
-    <template v-if="pictureRecived == true" style="z-index=1"
-      >
-
+    <template v-if="pictureRecived == true" style="z-index=1">
       <div
         ref="map"
         style="
@@ -184,8 +182,7 @@ canvas {
 
 .drop-down {
   display: block;
- 
+
   width: 175px;
- 
 }
 </style>
