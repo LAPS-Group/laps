@@ -50,10 +50,10 @@
         <template v-if="displayM1 == true">
           <img
             :src="images.marker1"
-            style="width: 2%; height: 2%; position: absolute; z-index=2"
+            style="width: 20px; height: 30px; position: absolute; z-index=2"
             v-bind:style="{
-              left: x1 - 14 + 'px',
-              top: y1 - 24 + 'px',
+              left: x1 - 10 + 'px',
+              top: y1 - 29 + 'px',
               Zindex: 2,
             }"
         /></template>
@@ -61,10 +61,10 @@
         <template v-if="displayM2 == true">
           <img
             :src="images.marker1"
-            style="width: 2%; height: 2%; position: absolute; z-index=2"
+            style="width: 20px; height: 30px; position: absolute; z-index=2"
             v-bind:style="{
-              left: x2 - 14 + 'px',
-              top: y2 - 24 + 'px',
+              left: x2 - 10 + 'px',
+              top: y2 - 29 + 'px',
               Zindex: 2,
             }"
         /></template>
